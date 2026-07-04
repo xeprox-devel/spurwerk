@@ -81,6 +81,10 @@ def make_assets() -> None:
         "-ac", "2", "-c:a", "aac", "-b:a", "96k", ASSETS / "a20.m4a"])
     ff(["-f", "lavfi", "-i", f"sine=frequency=550:duration={DURATION}",
         "-af", PAN_71, "-c:a", "aac", "-b:a", "256k", ASSETS / "a71.m4a"])
+    # DTS-Core 5.1 (FFmpegs dca-Encoder ist experimentell, reicht als Quelle)
+    ff(["-f", "lavfi", "-i", f"sine=frequency=660:duration={DURATION}",
+        "-af", PAN_51, "-c:a", "dca", "-strict", "experimental",
+        "-b:a", "768k", ASSETS / "a51.dts"])
 
     (ASSETS / "de.srt").write_text(SRT_DE, encoding="utf-8")
     (ASSETS / "en.srt").write_text(SRT_EN, encoding="utf-8")
@@ -143,6 +147,12 @@ def make_fixtures() -> None:
         video,
         "--language", "0:de", "--track-name", "0:Surround 7.1",
         "--default-track-flag", "0:yes", ASSETS / "a71.m4a",
+    ])
+
+    mux("film_dts.mkv", [
+        video,
+        "--language", "0:de", "--track-name", "0:DTS Surround",
+        "--default-track-flag", "0:yes", ASSETS / "a51.dts",
     ])
 
 

@@ -117,6 +117,35 @@ def test_51_zu_dd51_formatwechsel(tmp_path):
     assert converted.channels == 6
 
 
+def test_dts_zu_dd51(tmp_path):
+    """DTS 5.1 → E-AC3 5.1 als Kopie — der klassische DTS→DD-Fall."""
+    settings = StereoSettings(codec="eac3", channels="5.1", bitrate="640k",
+                              track_name="E-AC3 5.1")
+    profile = profile_de()
+    profile.stereo = settings
+    plan, ok = run_plan("film_dts.mkv", profile, tmp_path)
+    assert ok, plan.error
+
+    out = scan_file(TOOLS["mkvmerge"], plan.output_path)
+    audios = out.audio_tracks
+    assert len(audios) == 2
+    original, converted = audios
+    assert original.codec_id == "A_DTS"      # Original bleibt DTS, bitgenau
+    assert converted.codec_id == "A_EAC3"
+    assert converted.channels == 6
+
+
+def test_dts_zu_stereo(tmp_path):
+    """DTS 5.1 → AC3 Stereo mit Downmix-Preset."""
+    profile = profile_de()
+    profile.stereo = StereoSettings(codec="ac3", channels="2.0",
+                                    bitrate="192k", track_name="Stereo AC3")
+    plan, ok = run_plan("film_dts.mkv", profile, tmp_path)
+    assert ok, plan.error
+    out = scan_file(TOOLS["mkvmerge"], plan.output_path)
+    assert out.audio_tracks[-1].channels == 2
+
+
 def test_kein_deutsch_fallback(tmp_path):
     plan, ok = run_plan("serie_nodeu.mkv", profile_de(), tmp_path)
     assert ok, plan.error
