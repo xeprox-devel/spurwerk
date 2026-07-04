@@ -105,10 +105,14 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
     # ── Sonstiges ─────────────────────────────────────────────────────────
 
     def _set_icon(self) -> None:
-        icon = appconfig.base_path() / "audio_logo.ico"
+        # Im PyInstaller-Onefile-Build liegen eingebettete Dateien unter
+        # sys._MEIPASS — NICHT neben der EXE (deshalb fehlte das Fenster-Icon)
+        import sys
+        base = Path(getattr(sys, "_MEIPASS", appconfig.base_path()))
+        icon = base / "spurwerk.ico"
         if icon.exists():
             try:
-                self.iconbitmap(str(icon))
+                self.iconbitmap(default=str(icon))
             except Exception:
                 pass
 

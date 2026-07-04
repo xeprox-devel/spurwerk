@@ -8,7 +8,8 @@ $python = ".\.venv\Scripts\python.exe"
 
 & $python -m PyInstaller --noconfirm --clean --onefile --noconsole `
     --name "Spurwerk" `
-    --icon "audio_logo.ico" `
+    --icon "spurwerk.ico" `
+    --add-data "spurwerk.ico;." `
     --collect-all tkinterdnd2 `
     main.py
 
