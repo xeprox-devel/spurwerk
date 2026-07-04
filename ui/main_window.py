@@ -95,18 +95,25 @@ class MainWindow(ttk.Frame):
                              image=self._dot_bad, compound="left",
                              cursor="hand2")
             chip.pack(side="left", padx=(0, 12))
-            chip.bind("<Button-1>", lambda _e: self._show_tool_info())
+            chip.bind("<Button-1>", lambda _e: self._open_tool_manager())
             self.tool_chips[name] = chip
 
         ttk.Button(chips, text="⚙", width=3, bootstyle="secondary-outline",
-                   command=self._show_tool_info).pack(side="left")
+                   command=self._open_tool_manager).pack(side="left")
 
     def _build_empty_state(self) -> None:
+        from .tool_setup import OnboardingCard
         self.empty = ttk.Frame(self)
         self.empty.columnconfigure(0, weight=1)
 
+        self.onboarding = OnboardingCard(
+            self.empty,
+            on_download=lambda: self._open_tool_manager(auto_download=True),
+            on_manual=self._open_tool_manager)
+        # wird erst gegridet, wenn Tools fehlen (_update_onboarding)
+
         zone = ttk.Frame(self.empty, padding=40, bootstyle="dark")
-        zone.grid(row=0, column=0, sticky="ew", pady=(8, 4))
+        zone.grid(row=1, column=0, sticky="ew", pady=(8, 4))
         zone.columnconfigure(0, weight=1)
         ttk.Label(zone, text="MKV-Dateien hierher ziehen",
                   font=("Segoe UI", 14, "bold"), bootstyle="inverse-dark",
@@ -124,7 +131,7 @@ class MainWindow(ttk.Frame):
 
         self.empty_rule = ttk.Label(self.empty, foreground=theme.MUTED,
                                     anchor="center", justify="center")
-        self.empty_rule.grid(row=1, column=0, pady=(6, 12))
+        self.empty_rule.grid(row=2, column=0, pady=(6, 12))
 
     def _build_workspace(self) -> None:
         self.work = ttk.Frame(self)
@@ -726,18 +733,25 @@ class MainWindow(ttk.Frame):
                                text=f" {name} {status.version}")
             else:
                 chip.configure(image=self._dot_bad, text=f" {name} fehlt")
+        self._update_onboarding()
 
-    def _show_tool_info(self) -> None:
-        lines = []
-        for name in toolchain.REQUIRED:
-            status = self.tool_status.get(name)
-            if status and status.ok:
-                lines.append(f"{name} {status.version}\n    {status.path}")
-            else:
-                lines.append(f"{name}: nicht gefunden")
-        lines.append("\nTools gehören in den Ordner „tools“ neben der App.\n"
-                     "(Der Tool-Downloader folgt in Phase 4.)")
-        Messagebox.show_info("\n".join(lines), "Werkzeuge", parent=self)
+    def _update_onboarding(self) -> None:
+        missing = (not self.tool_status
+                   or any(not s.ok for s in self.tool_status.values()))
+        if missing and not self.plans:
+            self.onboarding.grid(row=0, column=0, sticky="ew", pady=(4, 10))
+        else:
+            self.onboarding.grid_forget()
+        self._autosize()
+
+    def _open_tool_manager(self, auto_download: bool = False) -> None:
+        from .tool_setup import ToolManagerDialog
+        dialog = ToolManagerDialog(
+            self, self.cfg, self.tool_status,
+            on_changed=lambda: threading.Thread(
+                target=self._probe_tools, daemon=True).start())
+        if auto_download:
+            dialog.after(300, lambda: dialog._download(only_missing=True))
 
     # ══ Persistenz ═══════════════════════════════════════════════════════
 
