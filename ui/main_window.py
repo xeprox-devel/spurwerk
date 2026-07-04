@@ -226,9 +226,9 @@ class MainWindow(ttk.Frame):
                                     foreground=theme.COLORS["warning"])
         self.warn_label.grid(row=3, column=0, sticky="w")
 
-        # ── Stereo-Panel (nur sichtbar, wenn relevant) ───────────────────
+        # ── Konvertierungs-Panel (nur sichtbar, wenn relevant) ──────────
         self.stereo_panel = ttk.Labelframe(
-            self.work, text=" Stereo-Konvertierung ", padding=(12, 8))
+            self.work, text=" Audio-Konvertierung ", padding=(12, 8))
         self.stereo_panel.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         self._build_stereo_panel(self.stereo_panel)
 
@@ -281,6 +281,11 @@ class MainWindow(ttk.Frame):
         self.codec_cb.pack(side="left", padx=(6, 18))
         self.codec_cb.bind("<<ComboboxSelected>>", self._on_stereo_changed)
 
+        ttk.Label(row1, text="Kanäle:").pack(side="left")
+        self.channels_cb = ttk.Combobox(row1, state="readonly", width=6)
+        self.channels_cb.pack(side="left", padx=(6, 18))
+        self.channels_cb.bind("<<ComboboxSelected>>", self._on_stereo_changed)
+
         ttk.Label(row1, text="Bitrate:").pack(side="left")
         self.bitrate_cb = ttk.Combobox(row1, state="readonly", width=8)
         self.bitrate_cb.pack(side="left", padx=(6, 18))
@@ -316,8 +321,12 @@ class MainWindow(ttk.Frame):
         self.preset_hint = ttk.Label(panel, foreground=theme.MUTED)
         self.preset_hint.pack(anchor="w", pady=(6, 0))
 
+        self._last_suggested = self.stereo.suggested_track_name()
+        self._lock_combos.append(self.channels_cb)
+        self._refresh_channels()
         self._refresh_bitrates()
         self._refresh_preset_hint()
+        self.track_table.convert_label = self.stereo.short_label()
 
     # ══ Zustand / Anzeige ════════════════════════════════════════════════
 
@@ -385,8 +394,8 @@ class MainWindow(ttk.Frame):
         audio_part = f"{counts['audio']}× Audio"
         if stereo:
             langs = ", ".join(display_name(t.lang) for t in stereo)
-            audio_part += (f" (NEU: {langs} Stereo "
-                           f"{self.stereo.codec.upper()} {self.stereo.bitrate})")
+            audio_part += (f" (NEU: {langs} {self.stereo.short_label()} "
+                           f"{self.stereo.bitrate})")
         parts.append(audio_part)
         parts.append(f"{counts['subtitles']}× Untertitel")
         if plan.media.has_chapters:
@@ -403,7 +412,7 @@ class MainWindow(ttk.Frame):
         count = sum(len(p.stereo_sources())
                     for p in self.plans.values() if p)
         self.stereo_panel.configure(
-            text=f" Stereo-Konvertierung — wirkt auf {count} Spur(en) ")
+            text=f" Audio-Konvertierung — wirkt auf {count} Spur(en) ")
         if any_stereo and not visible:
             self.stereo_panel.grid(row=4, column=0, sticky="ew", pady=(10, 0))
             self._autosize()
@@ -423,7 +432,8 @@ class MainWindow(ttk.Frame):
         text = f"▶  Start — {n} Datei{'en' if n != 1 else ''}"
         text += f" · {lossless} Spuren verlustfrei"
         if stereo:
-            text += f" · {stereo} Stereo-Konvertierung{'en' if stereo != 1 else ''}"
+            text += (f" · {stereo} Konvertierung{'en' if stereo != 1 else ''}"
+                     f" → {self.stereo.short_label()}")
         self.start_btn.configure(
             text=text, state="disabled" if self._running else "normal")
 
@@ -550,8 +560,12 @@ class MainWindow(ttk.Frame):
         self.codec_cb.set(OUTPUT_CODECS[self.stereo.codec]["label"])
         self.preset_cb.set(DOWNMIX_PRESETS[self.stereo.downmix_preset]["label"])
         self.trackname_var.set(self.stereo.track_name)
+        self._last_suggested = self.stereo.suggested_track_name()
         self.stereo_default_var.set(self.profile.stereo_make_default)
+        self._refresh_channels()
         self._refresh_bitrates()
+        self._refresh_preset_hint()
+        self.track_table.convert_label = self.stereo.short_label()
         for path, plan in self.plans.items():
             if plan is not None:
                 reapply_rules(plan, self.profile)
@@ -610,6 +624,13 @@ class MainWindow(ttk.Frame):
 
     # ══ Stereo-Einstellungen ═════════════════════════════════════════════
 
+    def _refresh_channels(self) -> None:
+        targets = OUTPUT_CODECS[self.stereo.codec]["channel_targets"]
+        self.channels_cb.configure(values=targets)
+        if self.stereo.channels not in targets:
+            self.stereo.channels = targets[-1]   # 7.1→5.1 beim Codec-Wechsel
+        self.channels_cb.set(self.stereo.channels)
+
     def _refresh_bitrates(self) -> None:
         info = OUTPUT_CODECS[self.stereo.codec]
         self.bitrate_cb.configure(values=info["bitrates"])
@@ -619,16 +640,40 @@ class MainWindow(ttk.Frame):
 
     def _on_stereo_changed(self, _event=None) -> None:
         self.stereo.codec = self._codec_by_label[self.codec_cb.get()]
+        self.stereo.channels = self.channels_cb.get() or self.stereo.channels
+        self._refresh_channels()
         self._refresh_bitrates()
         self.stereo.bitrate = self.bitrate_cb.get()
         self.stereo.downmix_preset = self._preset_by_label[self.preset_cb.get()]
-        self.stereo.track_name = self.trackname_var.get().strip() or "Stereo"
+
+        # Spurname folgt dem Vorschlag, solange der Nutzer ihn nicht anfasst
+        suggested = self.stereo.suggested_track_name()
+        current = self.trackname_var.get().strip()
+        if current in ("", self._last_suggested):
+            self.trackname_var.set(suggested)
+        self._last_suggested = suggested
+        self.stereo.track_name = (self.trackname_var.get().strip()
+                                  or suggested)
+
+        # Downmix-Preset wirkt nur beim Ziel 2.0
+        self.preset_cb.configure(
+            state="disabled" if (self.stereo.channels != "2.0"
+                                 or self._running) else "readonly")
+        self.track_table.convert_label = self.stereo.short_label()
+        self.track_table.refresh()
         self._refresh_preset_hint()
         self._update_preview()
 
     def _refresh_preset_hint(self) -> None:
-        self.preset_hint.configure(
-            text="ⓘ " + DOWNMIX_PRESETS[self.stereo.downmix_preset]["hint"])
+        if self.stereo.channels == "2.0":
+            hint = DOWNMIX_PRESETS[self.stereo.downmix_preset]["hint"]
+        else:
+            hint = (f"Ziel {self.stereo.channels}: FFmpeg mischt mit Standard-"
+                    f"Koeffizienten; kein Upmix — Quellen mit weniger Kanälen "
+                    f"behalten ihr Layout.")
+        if self.stereo.codec in ("ac3", "eac3"):
+            hint += "  ·  AC3/E-AC3: maximal 5.1 (echtes 7.1 nur als AAC)."
+        self.preset_hint.configure(text="ⓘ " + hint)
 
     def _on_stereo_default_toggled(self) -> None:
         make_default = self.stereo_default_var.get()
@@ -751,6 +796,9 @@ class MainWindow(ttk.Frame):
         self.track_table.locked = running
         self.start_btn.configure(state="disabled" if running else "normal")
         self.cancel_btn.configure(state="normal" if running else "disabled")
+        if not running:
+            # Zustandsabhängige Feinheiten wiederherstellen (Preset-Sperre)
+            self._on_stereo_changed()
 
     def _cancel(self) -> None:
         self.cancel.set()

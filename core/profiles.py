@@ -53,9 +53,10 @@ def describe(profile: RuleProfile) -> str:
     else:
         audio = f"Behalte {langs}-Audio"
 
+    fmt = profile.stereo.short_label()
     stereo = {
-        "add": "5.1 → zusätzlich Stereo-Kopie",
-        "replace": "5.1 → durch Stereo ersetzen",
+        "add": f"Mehrkanal → zusätzlich {fmt}-Kopie",
+        "replace": f"Mehrkanal → durch {fmt} ersetzen",
         "never": "keine Konvertierung (verlustfrei)",
     }[profile.stereo_policy]
 

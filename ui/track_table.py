@@ -18,13 +18,6 @@ from core.model import Action, FilePlan, Origin, Track
 
 from . import theme
 
-ACTION_LABELS = {
-    Action.COPY: "Kopieren",
-    Action.STEREO_ADD: "Kopie + Stereo",
-    Action.STEREO_REPLACE: "→ Stereo ersetzen",
-    Action.DROP: "—",
-}
-
 TYPE_LABELS = {"video": "Video", "audio": "Audio", "subtitles": "Untertitel"}
 
 _CHANNEL_NAMES = {1: "1.0", 2: "2.0", 3: "2.1", 6: "5.1", 7: "6.1", 8: "7.1"}
@@ -45,6 +38,7 @@ class TrackTable(ttk.Frame):
         self.on_change = on_change
         self.plan: FilePlan | None = None
         self.locked = False   # während eines Laufs sind Pläne eingefroren
+        self.convert_label = "Stereo AC3"   # z. B. "E-AC3 5.1", vom Panel gesetzt
         self._images = theme.make_check_images(self)   # Referenzen halten!
 
         self.columnconfigure(0, weight=1)
@@ -107,9 +101,17 @@ class TrackTable(ttk.Frame):
             else:
                 self.tree.item(iid, tags=())
 
+    def _action_label(self, action: Action) -> str:
+        return {
+            Action.COPY: "Kopieren",
+            Action.STEREO_ADD: f"Kopie + {self.convert_label}",
+            Action.STEREO_REPLACE: f"→ {self.convert_label} (ersetzt)",
+            Action.DROP: "—",
+        }[action]
+
     def _row_values(self, track: Track) -> tuple:
         dec = self.plan.decisions[track.id]
-        action = ACTION_LABELS[dec.action]
+        action = self._action_label(dec.action)
         if track.type == "audio" and dec.action is not Action.DROP:
             action += "  ▾"
         if self._is_default_audio(track):
@@ -200,8 +202,9 @@ class TrackTable(ttk.Frame):
 
         if track.type == "audio":
             add("Kopieren (verlustfrei)", Action.COPY)
-            add("Kopie + Stereo (Original behalten)", Action.STEREO_ADD)
-            add("Durch Stereo ersetzen", Action.STEREO_REPLACE)
+            add(f"Kopie + {self.convert_label} (Original behalten)",
+                Action.STEREO_ADD)
+            add(f"Durch {self.convert_label} ersetzen", Action.STEREO_REPLACE)
             add("Entfernen", Action.DROP)
             if with_extras and dec.action is not Action.DROP:
                 menu.add_separator()

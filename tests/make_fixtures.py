@@ -30,6 +30,7 @@ ASSETS = OUT / "_assets"
 DURATION = "4"  # Sekunden
 
 PAN_51 = "pan=5.1|FL=c0|FR=c0|FC=c0|LFE=c0|BL=c0|BR=c0"
+PAN_71 = ("pan=7.1|FL=c0|FR=c0|FC=c0|LFE=c0|BL=c0|BR=c0|SL=c0|SR=c0")
 
 SRT_DE = """1
 00:00:00,500 --> 00:00:02,000
@@ -78,6 +79,8 @@ def make_assets() -> None:
         "-af", PAN_51, "-c:a", "ac3", "-b:a", "192k", ASSETS / "a51.ac3"])
     ff(["-f", "lavfi", "-i", f"sine=frequency=330:duration={DURATION}",
         "-ac", "2", "-c:a", "aac", "-b:a", "96k", ASSETS / "a20.m4a"])
+    ff(["-f", "lavfi", "-i", f"sine=frequency=550:duration={DURATION}",
+        "-af", PAN_71, "-c:a", "aac", "-b:a", "256k", ASSETS / "a71.m4a"])
 
     (ASSETS / "de.srt").write_text(SRT_DE, encoding="utf-8")
     (ASSETS / "en.srt").write_text(SRT_EN, encoding="utf-8")
@@ -134,6 +137,12 @@ def make_fixtures() -> None:
     mux("film_und.mkv", [
         video,
         "--language", "0:und", "--default-track-flag", "0:yes", a20,
+    ])
+
+    mux("film_71.mkv", [
+        video,
+        "--language", "0:de", "--track-name", "0:Surround 7.1",
+        "--default-track-flag", "0:yes", ASSETS / "a71.m4a",
     ])
 
 

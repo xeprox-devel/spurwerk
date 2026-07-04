@@ -83,6 +83,40 @@ def test_delay_bleibt_erhalten(tmp_path):
     assert abs(stereo.delay_ms - 500) <= 40   # --sync übertragen
 
 
+def test_71_zu_dd51_konvertierung(tmp_path):
+    """7.1-Quelle → E-AC3 5.1 als Kopie (Geräte-Kompatibilitäts-Fall)."""
+    settings = StereoSettings(codec="eac3", channels="5.1", bitrate="640k",
+                              track_name="E-AC3 5.1")
+    profile = profile_de()
+    profile.stereo = settings
+    plan, ok = run_plan("film_71.mkv", profile, tmp_path)
+    assert ok, plan.error
+
+    out = scan_file(TOOLS["mkvmerge"], plan.output_path)
+    audios = out.audio_tracks
+    assert len(audios) == 2
+    original, converted = audios
+    assert original.channels == 8            # Original bleibt 7.1
+    assert converted.channels == 6           # neue Spur ist echtes 5.1
+    assert converted.codec_id == "A_EAC3"
+    assert converted.name == "E-AC3 5.1"
+
+
+def test_51_zu_dd51_formatwechsel(tmp_path):
+    """AC3 5.1 → E-AC3 5.1: reiner Formatwechsel, Layout bleibt (DTS→DD-Fall)."""
+    settings = StereoSettings(codec="eac3", channels="5.1", bitrate="640k",
+                              track_name="E-AC3 5.1")
+    profile = profile_de(stereo_policy="replace")
+    profile.stereo = settings
+    plan, ok = run_plan("film_std.mkv", profile, tmp_path)
+    assert ok, plan.error
+
+    out = scan_file(TOOLS["mkvmerge"], plan.output_path)
+    converted = out.audio_tracks[0]
+    assert converted.codec_id == "A_EAC3"
+    assert converted.channels == 6
+
+
 def test_kein_deutsch_fallback(tmp_path):
     plan, ok = run_plan("serie_nodeu.mkv", profile_de(), tmp_path)
     assert ok, plan.error

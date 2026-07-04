@@ -18,28 +18,30 @@ from ttkbootstrap.style import Style, ThemeDefinition
 
 THEME_NAME = "spurwerk-dark"
 
+# „Nachtcyan“: Akzent #22d3ee von ricardo-rehfeldt.de (--accent), Grund als
+# cyan-getöntes Nachtblau statt neutralem Grau; Grün ist ein echtes Grün.
 COLORS = {
-    "primary":  "#8b5cf6",   # Akzent-Violett — exklusiv für „neu erzeugt"
-    "secondary": "#4a4458",
-    "success":  "#2dd4a7",   # behalten / verlustfrei
-    "info":     "#4aa8ff",
-    "warning":  "#f5a623",
+    "primary":  "#22d3ee",   # Akzent-Cyan — exklusiv für „neu erzeugt"
+    "secondary": "#44545e",
+    "success":  "#22c55e",   # behalten / verlustfrei (richtiges Grün)
+    "info":     "#818cf8",   # Indigo (accent-3 der Webseite)
+    "warning":  "#f59e0b",   # Amber wie auf der Webseite
     "danger":   "#ff5370",   # entfernen / Fehler
-    "light":    "#ada8bc",
-    "dark":     "#1c1926",
-    "bg":       "#14121a",
-    "fg":       "#e9e6f2",
-    "selectbg": "#3b2a63",   # abgedunkeltes Violett: Selektion + readonly-Felder
+    "light":    "#a9bac4",
+    "dark":     "#14212a",
+    "bg":       "#0d151a",
+    "fg":       "#e6edf2",
+    "selectbg": "#0e4653",   # abgedunkeltes Cyan: Selektion + readonly-Felder
     "selectfg": "#ffffff",
-    "border":   "#2c2838",
-    "inputfg":  "#e9e6f2",
-    "inputbg":  "#1c1926",
-    "active":   "#2c2838",
+    "border":   "#24333d",
+    "inputfg":  "#e6edf2",
+    "inputbg":  "#14212a",
+    "active":   "#24333d",
 }
 
 # Zusatzfarben außerhalb des ttkbootstrap-Schemas
-MUTED = "#6b6478"        # abgewählte Spuren, Nebentexte
-SURFACE_ALT = "#211d2b"  # Zeilentrenner
+MUTED = "#5f717c"        # abgewählte Spuren, Nebentexte (von der Webseite)
+SURFACE_ALT = "#18262f"  # Zeilentrenner
 
 
 def register(style: Style) -> None:
@@ -78,9 +80,9 @@ def make_check_images(master: tk.Misc) -> dict[str, PhotoImage]:
     images["on"] = finish(img)
 
     img, draw = base(COLORS["primary"])
-    draw.line([(s * .5, s * .28), (s * .5, s * .72)], fill="#f5f3ff",
+    draw.line([(s * .5, s * .28), (s * .5, s * .72)], fill="#083344",
               width=2 * scale)
-    draw.line([(s * .28, s * .5), (s * .72, s * .5)], fill="#f5f3ff",
+    draw.line([(s * .28, s * .5), (s * .72, s * .5)], fill="#083344",
               width=2 * scale)
     images["stereo"] = finish(img)
 

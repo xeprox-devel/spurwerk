@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from core.commands import (build_ffmpeg_downmix, build_mkvmerge_mux,
-                           stereo_temp_name)
+                           effective_channels, stereo_temp_name)
 from core.model import Action, StereoSettings
 from core.planner import build_plan
 from tests.helpers import film_std, media, profile_de, track
@@ -125,4 +125,56 @@ class TestFfmpegDownmix:
     def test_temp_name_pro_spur(self):
         assert stereo_temp_name(film_std().track(1),
                                 StereoSettings(codec="eac3")) \
-            == "stereo_track1.eac3"
+            == "convert_track1.eac3"
+
+
+class TestKanalziele:
+    """DD-Formate von 7.1 bis 2.0 — mit ehrlichen Codec-Grenzen."""
+
+    def _cmd(self, source_channels: int, **settings_kw):
+        m = media(track(0, "video"),
+                  track(1, "audio", "de", channels=source_channels))
+        plan = build_plan(m, profile_de())
+        plan.set_action(1, Action.STEREO_ADD)
+        return build_ffmpeg_downmix("ffmpeg", plan, m.track(1),
+                                    StereoSettings(**settings_kw), "o.bin")
+
+    def test_dts51_zu_dd51(self):
+        # DTS 5.1 → DD 5.1: reine Format-Konvertierung, Layout bleibt
+        cmd = self._cmd(6, codec="ac3", channels="5.1")
+        assert arg_after(cmd, "-ac") == "6"
+        assert "-af" not in cmd
+
+    def test_71_zu_51(self):
+        # E-AC3 7.1 → 5.1 (Geräte-Kompatibilität)
+        cmd = self._cmd(8, codec="eac3", channels="5.1")
+        assert arg_after(cmd, "-ac") == "6"
+
+    def test_71_zu_71_nur_aac(self):
+        # echtes 7.1 kann nur AAC
+        cmd = self._cmd(8, codec="aac", channels="7.1")
+        assert arg_after(cmd, "-ac") == "8"
+
+    def test_ac3_kann_kein_71_wird_gedeckelt(self):
+        # defensiv: selbst wenn 7.1 durchrutscht, endet AC3 bei 5.1
+        cmd = self._cmd(8, codec="ac3", channels="7.1")
+        assert arg_after(cmd, "-ac") == "6"
+
+    def test_kein_upmix(self):
+        # 5.1-Quelle + Ziel 7.1 → bleibt 5.1 (kein Fake-Upmix)
+        cmd = self._cmd(6, codec="aac", channels="7.1")
+        assert arg_after(cmd, "-ac") == "6"
+
+    def test_ziel_20_nutzt_weiter_pan_preset(self):
+        cmd = self._cmd(8, codec="ac3", channels="2.0")
+        assert arg_after(cmd, "-af").startswith("pan=stereo|")
+
+    def test_effective_channels(self):
+        t = track(1, "audio", "de", channels=8)
+        assert effective_channels(t, StereoSettings(codec="eac3",
+                                                    channels="7.1")) == 6
+        assert effective_channels(t, StereoSettings(codec="aac",
+                                                    channels="7.1")) == 8
+        t2 = track(1, "audio", "de", channels=2)
+        assert effective_channels(t2, StereoSettings(codec="aac",
+                                                     channels="5.1")) == 2

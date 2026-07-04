@@ -99,15 +99,29 @@ class TrackDecision:
 
 @dataclass
 class StereoSettings:
-    """Gilt global für alle Stereo-Aktionen eines Jobs."""
+    """Konvertierungs-Einstellungen — gelten global für alle
+    Konvertier-Aktionen eines Jobs. `channels` ist das ZIEL-Layout;
+    das effektive Layout ist immer min(Quelle, Ziel) — nie Upmix."""
 
     codec: str = "ac3"               # ac3 | eac3 | aac
+    channels: str = "2.0"            # "2.0" | "5.1" | "7.1"
     bitrate: str = "640k"
-    downmix_preset: str = "loro"     # loro | pro | lfeboost | passthrough
-    track_name: str = "Stereo"
+    downmix_preset: str = "loro"     # loro | pro | lfeboost | passthrough (nur Ziel 2.0)
+    track_name: str = "Stereo AC3"
+
+    def suggested_track_name(self) -> str:
+        from .presets import OUTPUT_CODECS
+        short = OUTPUT_CODECS[self.codec]["short"]
+        return (f"Stereo {short}" if self.channels == "2.0"
+                else f"{short} {self.channels}")
 
     def display_track_name(self) -> str:
-        return self.track_name or f"Stereo {self.codec.upper()}"
+        return self.track_name or self.suggested_track_name()
+
+    def short_label(self) -> str:
+        """Kompakte Beschreibung, z. B. „E-AC3 5.1“ — für Tabelle & Vorschau."""
+        from .presets import OUTPUT_CODECS
+        return f"{OUTPUT_CODECS[self.codec]['short']} {self.channels}"
 
 
 @dataclass

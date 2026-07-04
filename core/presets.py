@@ -8,24 +8,39 @@ einheitlich den Pan-Filter.
 
 from __future__ import annotations
 
+# Ziel-Kanallayouts. WICHTIG (lokal verifiziert): FFmpegs E-AC3-Encoder kann
+# kein echtes 7.1 — er mischt still auf 5.1 herunter. AC3 endet per Spec bei
+# 5.1. Echte 7.1-Ausgabe gibt es deshalb nur als AAC. Upmix gibt es nie:
+# das effektive Ziel ist immer min(Quellkanäle, Zielkanäle).
+CHANNEL_TARGETS: dict[str, int] = {"2.0": 2, "5.1": 6, "7.1": 8}
+
 OUTPUT_CODECS: dict[str, dict] = {
     "ac3": {
         "label": "AC3 (Dolby Digital)",
+        "short": "AC3",
         "ext": ".ac3",
         "bitrates": ["192k", "256k", "384k", "448k", "640k"],
         "default_bitrate": "640k",
+        "channel_targets": ["2.0", "5.1"],
+        "max_channels": 6,
     },
     "eac3": {
         "label": "E-AC3 (Dolby Digital+)",
+        "short": "E-AC3",
         "ext": ".eac3",
-        "bitrates": ["192k", "256k", "384k", "448k", "640k", "768k"],
+        "bitrates": ["192k", "256k", "384k", "448k", "640k", "768k", "1024k"],
         "default_bitrate": "640k",
+        "channel_targets": ["2.0", "5.1"],
+        "max_channels": 6,
     },
     "aac": {
         "label": "AAC",
+        "short": "AAC",
         "ext": ".m4a",
-        "bitrates": ["128k", "160k", "192k", "256k", "320k"],
+        "bitrates": ["128k", "160k", "192k", "256k", "320k", "384k", "512k"],
         "default_bitrate": "256k",
+        "channel_targets": ["2.0", "5.1", "7.1"],
+        "max_channels": 8,
     },
 }
 

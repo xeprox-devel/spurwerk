@@ -7,30 +7,46 @@ in tests/test_commands.py verifizieren jede Kommandoform.
 from __future__ import annotations
 
 from .model import FilePlan, StereoSettings, Track
-from .presets import DOWNMIX_PRESETS, OUTPUT_CODECS
+from .presets import CHANNEL_TARGETS, DOWNMIX_PRESETS, OUTPUT_CODECS
 
 
 def stereo_temp_name(track: Track, settings: StereoSettings) -> str:
-    """Dateiname der temporären Stereo-Datei für eine Quellspur."""
+    """Dateiname der temporären Konvertierungs-Datei für eine Quellspur."""
     ext = OUTPUT_CODECS[settings.codec]["ext"]
-    return f"stereo_track{track.id}{ext}"
+    return f"convert_track{track.id}{ext}"
+
+
+def effective_channels(track: Track, settings: StereoSettings) -> int:
+    """Effektives Ziel-Layout: min(Quelle, Ziel, Codec-Maximum) — nie Upmix,
+    und AC3/E-AC3 enden ehrlich bei 5.1 (FFmpeg kann kein E-AC3 7.1)."""
+    source = track.channels or 2
+    target = CHANNEL_TARGETS[settings.channels]
+    codec_max = OUTPUT_CODECS[settings.codec]["max_channels"]
+    return min(source, target, codec_max)
 
 
 def build_ffmpeg_downmix(ffmpeg: str, plan: FilePlan, track: Track,
                          settings: StereoSettings, out_path: str) -> list[str]:
-    """Downmix einer Audiospur direkt aus der MKV (kein mkvextract-Umweg)."""
+    """Konvertierung einer Audiospur direkt aus der MKV — auf das
+    Ziel-Layout (2.0 mit Downmix-Preset, 5.1/7.1 per FFmpeg-Remix)."""
     audio_index = plan.media.ffmpeg_audio_index(track.id)
     cmd = [ffmpeg, "-y", "-v", "error",
            "-i", plan.media.path,
            "-map", f"0:a:{audio_index}",
            "-progress", "pipe:1", "-nostats"]
 
+    target = effective_channels(track, settings)
     pan_filter = DOWNMIX_PRESETS[settings.downmix_preset]["filter"]
-    if track.is_multichannel and pan_filter:
-        cmd += ["-af", pan_filter]
+    if target <= 2:
+        if track.is_multichannel and pan_filter:
+            cmd += ["-af", pan_filter]
+        else:
+            # Quelle ist bereits <=2 Kanäle oder Passthrough-Preset
+            cmd += ["-ac", "2"]
     else:
-        # Quelle ist bereits <=2 Kanäle oder Passthrough: Encoder reduziert
-        cmd += ["-ac", "2"]
+        # Mehrkanal-Ziel (z. B. DTS 5.1 → DD 5.1, E-AC3 7.1 → 5.1):
+        # FFmpeg mischt mit Standard-Koeffizienten aufs Ziel-Layout
+        cmd += ["-ac", str(target)]
 
     cmd += ["-c:a", settings.codec, "-b:a", settings.bitrate, out_path]
     return cmd

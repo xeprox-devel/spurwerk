@@ -104,21 +104,26 @@ class RuleEditorDialog(ttk.Toplevel):
                         ).pack(anchor="w", pady=2)
 
     def _build_stereo_box(self, parent) -> None:
-        box = ttk.Labelframe(parent, text=" Stereo (bei 5.1/7.1-Quellen) ",
+        box = ttk.Labelframe(parent,
+                             text=" Konvertierung (bei Mehrkanal-Quellen) ",
                              padding=10)
         box.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
         p = self._source
         self.stereo_policy = ttk.StringVar(value=p.stereo_policy)
-        for text, value in [("Stereo-Kopie zusätzlich (Original bleibt)", "add"),
-                            ("Durch Stereo ersetzen", "replace"),
-                            ("Keine Stereo-Konvertierung", "never")]:
+        for text, value in [
+                ("Konvertierte Kopie zusätzlich (Original bleibt)", "add"),
+                ("Durch konvertierte Spur ersetzen", "replace"),
+                ("Keine Konvertierung (nur remuxen)", "never")]:
             ttk.Radiobutton(box, text=text, variable=self.stereo_policy,
                             value=value, bootstyle="primary"
                             ).pack(anchor="w", pady=2)
         self.stereo_default = ttk.BooleanVar(value=p.stereo_make_default)
-        ttk.Checkbutton(box, text="Neue Stereospur als Standard-Audiospur",
+        ttk.Checkbutton(box, text="Neue Spur als Standard-Audiospur",
                         variable=self.stereo_default, bootstyle="primary"
                         ).pack(anchor="w", pady=(8, 2))
+        ttk.Label(box, text="Zielformat/Kanäle: im Panel „Audio-"
+                            "Konvertierung“ des Hauptfensters",
+                  foreground=theme.MUTED).pack(anchor="w", pady=(4, 0))
 
     def _build_sub_box(self, parent) -> None:
         box = ttk.Labelframe(parent, text=" Untertitel ", padding=10)
