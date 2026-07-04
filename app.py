@@ -113,5 +113,5 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
                 pass
 
     def _on_close(self) -> None:
-        self.main.on_close()
-        self.destroy()
+        if self.main.on_close():
+            self.destroy()

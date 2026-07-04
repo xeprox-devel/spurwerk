@@ -62,7 +62,9 @@ def normalize(language: str | None, language_ietf: str | None = None) -> str:
     lang = language.lower()
     if lang == UND:
         return UND
-    return _ISO2_TO_ISO1.get(lang, lang[:2] if len(lang) == 3 else lang)
+    # Unbekannte ISO-639-2-Codes unverändert lassen — mkvmerge akzeptiert
+    # sie als --language; ein erfundener 2-Buchstaben-Code wäre ungültig.
+    return _ISO2_TO_ISO1.get(lang, lang)
 
 
 def display_name(code: str) -> str:

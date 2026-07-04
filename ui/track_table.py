@@ -44,6 +44,7 @@ class TrackTable(ttk.Frame):
         super().__init__(master)
         self.on_change = on_change
         self.plan: FilePlan | None = None
+        self.locked = False   # während eines Laufs sind Pläne eingefroren
         self._images = theme.make_check_images(self)   # Referenzen halten!
 
         self.columnconfigure(0, weight=1)
@@ -137,6 +138,8 @@ class TrackTable(ttk.Frame):
         return self.plan.media.track(int(iid))
 
     def _on_click(self, event) -> str | None:
+        if self.locked:
+            return "break"
         track = self._track_at(event.y)
         if track is None:
             return None
@@ -152,6 +155,8 @@ class TrackTable(ttk.Frame):
         return None
 
     def _on_context(self, event) -> None:
+        if self.locked:
+            return
         track = self._track_at(event.y)
         if track is None:
             return
@@ -160,6 +165,8 @@ class TrackTable(ttk.Frame):
                                with_extras=True)
 
     def _on_space(self, _event) -> str:
+        if self.locked:
+            return "break"
         for iid in self.tree.selection():
             if self.plan:
                 self._toggle(self.plan.media.track(int(iid)), notify=False)
@@ -219,7 +226,7 @@ class TrackTable(ttk.Frame):
     # ── Massenaktionen (Buttons im Sektionskopf) ──────────────────────────
 
     def set_all(self, keep: bool) -> None:
-        if self.plan is None:
+        if self.plan is None or self.locked:
             return
         for track in self.plan.media.tracks:
             self.plan.set_action(

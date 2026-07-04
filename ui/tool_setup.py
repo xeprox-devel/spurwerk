@@ -173,17 +173,30 @@ class ToolManagerDialog(ttk.Toplevel):
     def _download_worker(self, kinds: list[str]) -> None:
         tools_dir = appconfig.base_path() / "tools"
         errors: list[str] = []
-        for kind in kinds:
-            title = _TOOL_TITLES[kind][0]
-            try:
-                self.q.put(("STEP", f"{title}: starte Download …", None))
-                downloader.DOWNLOADERS[kind](
-                    tools_dir,
-                    lambda msg, pct: self.q.put(("STEP", msg, pct)),
-                    self.cancel)
-            except downloader.DownloadError as exc:
-                errors.append(f"{title}: {exc}")
-        self.q.put(("DONE", errors))
+        try:
+            for kind in kinds:
+                title = _TOOL_TITLES[kind][0]
+                try:
+                    self.q.put(("STEP", f"{title}: starte Download …", None))
+                    downloader.DOWNLOADERS[kind](
+                        tools_dir,
+                        lambda msg, pct: self.q.put(("STEP", msg, pct)),
+                        self.cancel)
+                    # veralteten manuellen Pfad nicht weiter bevorzugen —
+                    # sonst überschattet er die frisch geladene EXE
+                    exe = _TOOL_EXES[kind]
+                    if self.cfg.tools.get(exe):
+                        self.cfg.tools.pop(exe, None)
+                        try:
+                            appconfig.save(self.cfg)
+                        except OSError:
+                            pass
+                except downloader.DownloadError as exc:
+                    errors.append(f"{title}: {exc}")
+                except Exception as exc:  # Dialog darf nie hängen bleiben
+                    errors.append(f"{title}: {exc}")
+        finally:
+            self.q.put(("DONE", errors))
 
     def _show_progress(self) -> None:
         self.gauge.grid(row=7, column=0, sticky="ew", pady=(4, 2))

@@ -52,5 +52,5 @@ def test_normalisierung():
     assert normalize("jpn") == "ja"
     assert normalize(None) == "und"
     assert normalize("und", "und") == "und"
-    assert normalize("xyz") == "xy"           # unbekannt: 3→2 Zeichen
+    assert normalize("xyz") == "xyz"          # unbekannt: unverändert lassen
     assert display_name("de") == "Deutsch"

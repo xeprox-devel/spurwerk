@@ -91,6 +91,75 @@ def test_kein_deutsch_fallback(tmp_path):
     assert any(t.lang == "en" for t in out.audio_tracks)
 
 
+def test_mkvmerge_fehler_wird_gemeldet(tmp_path):
+    """Regression (Review-Fund 1): Subprozess-Exit-Codes dürfen nie
+    verschluckt werden — kaputte Quelle ⇒ ERROR, nie DONE."""
+    import dataclasses
+    media = scan_file(TOOLS["mkvmerge"], str(FIXTURES / "film_std.mkv"))
+    bad_src = tmp_path / "kaputt.mkv"
+    bad_src.write_bytes(b"das ist kein matroska")
+    plan = build_plan(dataclasses.replace(media, path=str(bad_src)),
+                      profile_de(stereo_policy="never"))
+    plan.output_path = str(tmp_path / "out.mkv")
+
+    runner = JobRunner(TOOLS, queue.Queue())
+    assert runner.run([plan], StereoSettings()) == 0
+    assert plan.status is FileStatus.ERROR
+    assert "mkvmerge" in plan.error
+    assert not Path(plan.output_path).exists()
+
+
+def test_ffmpeg_fehler_wird_gemeldet(tmp_path):
+    import dataclasses
+    media = scan_file(TOOLS["mkvmerge"], str(FIXTURES / "film_std.mkv"))
+    bad_src = tmp_path / "kaputt.mkv"
+    bad_src.write_bytes(b"das ist kein matroska")
+    plan = build_plan(dataclasses.replace(media, path=str(bad_src)),
+                      profile_de())   # Stereo-Aktion ⇒ FFmpeg läuft zuerst
+    plan.output_path = str(tmp_path / "out.mkv")
+
+    runner = JobRunner(TOOLS, queue.Queue())
+    assert runner.run([plan], StereoSettings(bitrate="192k")) == 0
+    assert plan.status is FileStatus.ERROR
+    assert "FFmpeg" in plan.error
+
+
+def test_altes_ergebnis_bleibt_bei_fruehem_fehler(tmp_path):
+    """Regression (Review-Fund 8): Ein Fehler VOR dem Mux darf das intakte
+    Ergebnis eines früheren Laufs nicht löschen."""
+    import dataclasses
+    media = scan_file(TOOLS["mkvmerge"], str(FIXTURES / "film_std.mkv"))
+    bad_src = tmp_path / "kaputt.mkv"
+    bad_src.write_bytes(b"kein matroska")
+    old_output = tmp_path / "out.mkv"
+    old_output.write_bytes(b"intaktes ergebnis von gestern")
+
+    plan = build_plan(dataclasses.replace(media, path=str(bad_src)),
+                      profile_de())   # FFmpeg scheitert vor dem Mux
+    plan.output_path = str(old_output)
+
+    runner = JobRunner(TOOLS, queue.Queue())
+    assert runner.run([plan], StereoSettings()) == 0
+    assert plan.status is FileStatus.ERROR
+    assert old_output.read_bytes() == b"intaktes ergebnis von gestern"
+
+
+def test_ausgabe_kollision_im_batch(tmp_path):
+    """Regression (Review-Fund): identischer Ausgabepfad zweier Dateien —
+    die zweite darf das Ergebnis der ersten nicht überschreiben."""
+    media = scan_file(TOOLS["mkvmerge"], str(FIXTURES / "film_std.mkv"))
+    p1 = build_plan(media, profile_de(stereo_policy="never"))
+    p2 = build_plan(media, profile_de(stereo_policy="never"))
+    p1.output_path = str(tmp_path / "gleich.mkv")
+    p2.output_path = str(tmp_path / "GLEICH.mkv")   # case-insensitiv gleich
+
+    runner = JobRunner(TOOLS, queue.Queue())
+    assert runner.run([p1, p2], StereoSettings()) == 1
+    assert p1.status is FileStatus.DONE
+    assert p2.status is FileStatus.ERROR
+    assert "kollidiert" in p2.error
+
+
 def test_fehler_isoliert_pro_datei(tmp_path):
     """Kaputte Datei bricht den Batch nicht ab."""
     media = scan_file(TOOLS["mkvmerge"], str(FIXTURES / "film_und.mkv"))

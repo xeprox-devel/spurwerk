@@ -61,6 +61,10 @@ class MainWindow(ttk.Frame):
         self._scan_sem = threading.Semaphore(3)
         self.tools: dict[str, str] = {}
         self.tool_status: dict[str, toolchain.ToolStatus] = {}
+        self.output_dir = ""          # App-Zustand, überlebt Profilwechsel
+        self._running = False
+        self._lock_buttons: list = []   # während des Laufs gesperrt
+        self._lock_combos: list = []
 
         self.columnconfigure(0, weight=1)
         self._build_header()
@@ -149,17 +153,20 @@ class MainWindow(ttk.Frame):
 
         fbtn = ttk.Frame(files_head)
         fbtn.grid(row=0, column=2, sticky="e")
-        for text, cmd, style in [
-                ("+ Dateien", self._add_files_dialog, "primary-outline"),
-                ("+ Ordner", self._add_folder_dialog, "primary-outline"),
-                ("− Entfernen", self._remove_selected, "secondary-outline"),
-                ("Leeren", self._clear_files, "secondary-outline")]:
-            ttk.Button(fbtn, text=text, bootstyle=style, command=cmd,
-                       ).pack(side="left", padx=(6, 0))
+        for text, cmd, style, lockable in [
+                ("+ Dateien", self._add_files_dialog, "primary-outline", False),
+                ("+ Ordner", self._add_folder_dialog, "primary-outline", False),
+                ("− Entfernen", self._remove_selected, "secondary-outline", True),
+                ("Leeren", self._clear_files, "secondary-outline", True)]:
+            btn = ttk.Button(fbtn, text=text, bootstyle=style, command=cmd)
+            btn.pack(side="left", padx=(6, 0))
+            if lockable:
+                self._lock_buttons.append(btn)
         self.output_btn = ttk.Button(fbtn, text="Ausgabe: Quellordner  ▾",
                                      bootstyle="secondary-outline",
                                      command=self._output_menu)
         self.output_btn.pack(side="left", padx=(18, 0))
+        self._lock_buttons.append(self.output_btn)
 
         self.file_list = FileList(self.work, on_select=self._on_file_selected)
         self.file_list.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
@@ -176,8 +183,12 @@ class MainWindow(ttk.Frame):
         self.profile_cb.set(self.profile.name)
         self.profile_cb.grid(row=0, column=1)
         self.profile_cb.bind("<<ComboboxSelected>>", self._on_profile_changed)
-        ttk.Button(rules, text="Bearbeiten …", bootstyle="secondary-outline",
-                   command=self._edit_rules).grid(row=0, column=3, padx=(8, 0))
+        self._lock_combos.append(self.profile_cb)
+        edit_btn = ttk.Button(rules, text="Bearbeiten …",
+                              bootstyle="secondary-outline",
+                              command=self._edit_rules)
+        edit_btn.grid(row=0, column=3, padx=(8, 0))
+        self._lock_buttons.append(edit_btn)
         self.rule_label = ttk.Label(rules, foreground=theme.MUTED)
         self.rule_label.grid(row=0, column=2, sticky="w", padx=(14, 0))
 
@@ -196,15 +207,14 @@ class MainWindow(ttk.Frame):
         self.tracks_label.grid(row=0, column=0, sticky="w")
         tbtn = ttk.Frame(head)
         tbtn.grid(row=0, column=1, sticky="e")
-        ttk.Button(tbtn, text="Alle an", bootstyle="secondary-outline",
-                   command=lambda: self.track_table.set_all(True)
-                   ).pack(side="left", padx=(6, 0))
-        ttk.Button(tbtn, text="Alle aus", bootstyle="secondary-outline",
-                   command=lambda: self.track_table.set_all(False)
-                   ).pack(side="left", padx=(6, 0))
-        ttk.Button(tbtn, text="↺ Regel", bootstyle="secondary-outline",
-                   command=self._reset_selected_to_rule
-                   ).pack(side="left", padx=(6, 0))
+        for text, cmd in [
+                ("Alle an", lambda: self.track_table.set_all(True)),
+                ("Alle aus", lambda: self.track_table.set_all(False)),
+                ("↺ Regel", self._reset_selected_to_rule)]:
+            btn = ttk.Button(tbtn, text=text, bootstyle="secondary-outline",
+                             command=cmd)
+            btn.pack(side="left", padx=(6, 0))
+            self._lock_buttons.append(btn)
 
         self.track_table = TrackTable(tracks_frame,
                                       on_change=self._on_plan_edited)
@@ -291,13 +301,17 @@ class MainWindow(ttk.Frame):
         entry = ttk.Entry(row2, textvariable=self.trackname_var, width=24)
         entry.pack(side="left", padx=(6, 18))
         entry.bind("<FocusOut>", self._on_stereo_changed)
+        self._lock_buttons.append(entry)
 
         self.stereo_default_var = ttk.BooleanVar(
             value=self.profile.stereo_make_default)
-        ttk.Checkbutton(
+        default_cb = ttk.Checkbutton(
             row2, text="Neue Stereospur als Standard-Audiospur",
             variable=self.stereo_default_var, bootstyle="primary",
-            command=self._on_stereo_default_toggled).pack(side="left")
+            command=self._on_stereo_default_toggled)
+        default_cb.pack(side="left")
+        self._lock_buttons.append(default_cb)
+        self._lock_combos += [self.codec_cb, self.bitrate_cb, self.preset_cb]
 
         self.preset_hint = ttk.Label(panel, foreground=theme.MUTED)
         self.preset_hint.pack(anchor="w", pady=(6, 0))
@@ -410,15 +424,27 @@ class MainWindow(ttk.Frame):
         text += f" · {lossless} Spuren verlustfrei"
         if stereo:
             text += f" · {stereo} Stereo-Konvertierung{'en' if stereo != 1 else ''}"
-        running = self._worker is not None and self._worker.is_alive()
-        self.start_btn.configure(text=text,
-                                 state="disabled" if running else "normal")
+        self.start_btn.configure(
+            text=text, state="disabled" if self._running else "normal")
 
     # ══ Dateien hinzufügen / entfernen ═══════════════════════════════════
 
     def add_files(self, paths: list[str]) -> None:
-        added = [p for p in paths
-                 if p.lower().endswith(".mkv") and p not in self.plans]
+        # Pfade kanonisieren: sonst landet dieselbe Datei über Slash-Form
+        # oder Groß-/Kleinschreibung doppelt in der Liste
+        known = {p.lower() for p in self.plans}
+        added: list[str] = []
+        for raw in paths:
+            if not raw.lower().endswith(".mkv"):
+                continue
+            try:
+                path = str(Path(raw).resolve())
+            except OSError:
+                path = str(Path(raw))
+            if path.lower() in known:
+                continue
+            known.add(path.lower())
+            added.append(path)
         if not added:
             return
         for path in added:
@@ -453,6 +479,8 @@ class MainWindow(ttk.Frame):
             self.add_files(files)
 
     def _remove_selected(self) -> None:
+        if self._running:
+            return
         for path in self.file_list.remove_selected():
             self.plans.pop(path, None)
             if self.selected == path:
@@ -465,6 +493,8 @@ class MainWindow(ttk.Frame):
         self._refresh_all()
 
     def _clear_files(self) -> None:
+        if self._running:
+            return
         self.plans.clear()
         self.selected = None
         self.file_list.clear()
@@ -514,6 +544,8 @@ class MainWindow(ttk.Frame):
     def _on_profile_changed(self, _event=None) -> None:
         self.profile = self.cfg.profile(self.profile_cb.get())
         self.cfg.active_profile = self.profile.name
+        # fester Ausgabeordner ist App-Zustand und überlebt den Wechsel
+        self.profile.output.directory = self.output_dir
         self.stereo = replace(self.profile.stereo)
         self.codec_cb.set(OUTPUT_CODECS[self.stereo.codec]["label"])
         self.preset_cb.set(DOWNMIX_PRESETS[self.stereo.downmix_preset]["label"])
@@ -554,7 +586,10 @@ class MainWindow(ttk.Frame):
         self.profile_cb.configure(
             values=[p.name for p in self.cfg.all_profiles()])
         self.profile_cb.set(self.profile.name)
-        appconfig.save(self.cfg)
+        try:
+            appconfig.save(self.cfg)
+        except OSError as exc:
+            self.log.log(f"Konfiguration nicht speicherbar: {exc}", "error")
         self._on_profile_changed()
         if not self.plans:
             self._sync_state()   # Leerzustand-Beschreibung aktualisieren
@@ -633,6 +668,7 @@ class MainWindow(ttk.Frame):
             self._set_output_dir(folder)
 
     def _set_output_dir(self, folder: str) -> None:
+        self.output_dir = folder
         self.profile.output.directory = folder
         label = Path(folder).name if folder else "Quellordner"
         self.output_btn.configure(text=f"Ausgabe: {label}  ▾")
@@ -644,8 +680,10 @@ class MainWindow(ttk.Frame):
     # ══ Start / Abbruch ══════════════════════════════════════════════════
 
     def _start(self) -> None:
+        import copy
+        import os
         plans = [p for p in self.plans.values() if p is not None]
-        if not plans:
+        if not plans or self._running:
             return
         needs_ffmpeg = any(p.stereo_sources() for p in plans)
         missing = [n for n in ("mkvmerge",)
@@ -658,6 +696,22 @@ class MainWindow(ttk.Frame):
                 f"Bitte über das ⚙-Symbol einrichten.", "Tools fehlen",
                 parent=self)
             return
+
+        # Ausgabe-Kollisionen (gleicher Dateiname aus verschiedenen Ordnern
+        # bei festem Ausgabeordner) vor dem Start abfangen
+        seen: dict[str, str] = {}
+        for p in plans:
+            key = os.path.normcase(os.path.abspath(p.output_path))
+            if key in seen:
+                Messagebox.show_error(
+                    f"Zwei Dateien hätten dieselbe Ausgabedatei:\n"
+                    f"{Path(seen[key]).name}  und  {Path(p.media.path).name}\n"
+                    f"→ {Path(p.output_path).name}\n\n"
+                    f"Bitte Ausgabename oder -ordner anpassen "
+                    f"(Rechtsklick auf die Datei).", "Ausgabe-Kollision",
+                    parent=self)
+                return
+            seen[key] = p.media.path
 
         existing = [p for p in plans if Path(p.output_path).exists()]
         if existing:
@@ -674,13 +728,29 @@ class MainWindow(ttk.Frame):
             self._update_file_row(plan.media.path, plan)
         self.gauge_file.configure(value=0)
         self.gauge_total.configure(value=0)
-        self.start_btn.configure(state="disabled")
-        self.cancel_btn.configure(state="normal")
+        self._set_running(True)
 
+        # Snapshot: Der Worker arbeitet auf Kopien — die UI ist zusätzlich
+        # gesperrt, aber selbst wenn etwas durchrutscht, bleibt der Lauf
+        # von Modelländerungen isoliert.
+        run_plans = [copy.deepcopy(p) for p in plans]
         self.runner = JobRunner(self.tools, self.ui_q, self.cancel)
         self._worker = threading.Thread(
-            target=self.runner.run, args=(plans, self.stereo), daemon=True)
+            target=self.runner.run,
+            args=(run_plans, replace(self.stereo)), daemon=True)
         self._worker.start()
+
+    def _set_running(self, running: bool) -> None:
+        self._running = running
+        widget_state = "disabled" if running else "normal"
+        combo_state = "disabled" if running else "readonly"
+        for widget in self._lock_buttons:
+            widget.configure(state=widget_state)
+        for combo in self._lock_combos:
+            combo.configure(state=combo_state)
+        self.track_table.locked = running
+        self.start_btn.configure(state="disabled" if running else "normal")
+        self.cancel_btn.configure(state="normal" if running else "disabled")
 
     def _cancel(self) -> None:
         self.cancel.set()
@@ -714,11 +784,16 @@ class MainWindow(ttk.Frame):
             _, path, status, error = msg
             plan = self.plans.get(path)
             if plan:
+                # Runner arbeitet auf Kopien — Status aufs Original spiegeln
+                plan.status = status
+                plan.error = error
                 self._update_file_row(path, plan)
             if status is FileStatus.ERROR and error:
                 self.log.set_expanded(True)
         elif kind == "SCANNED":
             path, media = msg[1], msg[2]
+            if path not in self.plans:
+                return   # Datei wurde während des Scans entfernt
             plan = build_plan(media, self.profile)
             self.plans[path] = plan
             self._update_file_row(path, plan)
@@ -731,6 +806,8 @@ class MainWindow(ttk.Frame):
             self._autosize()
         elif kind == "SCAN_FAILED":
             path, error = msg[1], msg[2]
+            if path not in self.plans:
+                return   # Datei wurde während des Scans entfernt
             self.file_list.update_file(path, plan_text=error,
                                        status="Scan-Fehler", tag="error")
             self.log.log(f"{Path(path).name}: {error}", "error")
@@ -741,8 +818,7 @@ class MainWindow(ttk.Frame):
             self._on_batch_done(msg[1], msg[2], msg[3])
 
     def _on_batch_done(self, success: int, total: int, cancelled: bool) -> None:
-        self.start_btn.configure(state="normal")
-        self.cancel_btn.configure(state="disabled")
+        self._set_running(False)
         self.status_label.configure(text="")
         self._update_start_button()
         if cancelled:
@@ -800,6 +876,23 @@ class MainWindow(ttk.Frame):
 
     # ══ Persistenz ═══════════════════════════════════════════════════════
 
-    def on_close(self) -> None:
+    def on_close(self) -> bool:
+        """True = schließen erlaubt. Laufende Jobs werden erst bestätigt,
+        dann sauber terminiert; ein Speicherfehler blockiert nie das Beenden."""
+        if self._worker is not None and self._worker.is_alive():
+            answer = Messagebox.yesno(
+                "Die Verarbeitung läuft noch — wirklich beenden?\n"
+                "Die aktuelle Datei wird abgebrochen und aufgeräumt.",
+                "Spurwerk beenden", parent=self)
+            if answer not in ("Ja", "Yes"):
+                return False
+            self.cancel.set()
+            if self.runner:
+                self.runner.terminate_active()
+            self._worker.join(timeout=3)
         self.cfg.log_expanded = self.log.expanded
-        appconfig.save(self.cfg)
+        try:
+            appconfig.save(self.cfg)
+        except OSError:
+            pass  # z. B. schreibgeschützter Ordner — Beenden geht trotzdem
+        return True

@@ -119,7 +119,12 @@ def _expect_hash(sums_text: str, filename: str) -> str | None:
     lines = [ln.strip() for ln in sums_text.splitlines() if ln.strip()]
     for line in lines:
         parts = line.replace("*", " ").split()
-        if len(parts) >= 2 and parts[-1].lower().endswith(filename.lower()):
+        if len(parts) < 2:
+            continue
+        # exakter Dateinamen-Vergleich (Pfadpräfixe abschneiden) — endswith
+        # würde auch "xyz-<name>.zip" matchen
+        name = parts[-1].replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if name == filename.lower():
             return parts[0].lower()
     if len(lines) == 1 and len(lines[0].split()[0]) == 64:
         return lines[0].split()[0].lower()
@@ -133,16 +138,27 @@ def _extract_members(archive: Path, wanted_suffixes: dict[str, str],
     wanted_suffixes: Member-Endung (lowercase, '/'-normalisiert) → Zieldatei.
     """
     extracted: list[str] = []
-    with zipfile.ZipFile(archive) as zf:
-        for member in zf.namelist():
-            normalized = member.replace("\\", "/").lower()
-            for suffix, target_name in wanted_suffixes.items():
-                if normalized.endswith(suffix):
-                    progress(f"Entpacke {target_name} …", None)
-                    target = tools_dir / target_name
-                    with zf.open(member) as src, open(target, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
-                    extracted.append(str(target))
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.namelist():
+                normalized = member.replace("\\", "/").lower()
+                for suffix, target_name in wanted_suffixes.items():
+                    if normalized.endswith(suffix):
+                        progress(f"Entpacke {target_name} …", None)
+                        target = tools_dir / target_name
+                        # erst .part schreiben, dann atomar ersetzen — nie
+                        # eine halbe EXE hinterlassen
+                        part = target.with_suffix(".part")
+                        with zf.open(member) as src, open(part, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        part.replace(target)
+                        extracted.append(str(target))
+    except PermissionError as exc:
+        raise DownloadError(
+            "EXE wird gerade verwendet — bitte laufende Jobs beenden und "
+            "erneut versuchen.") from exc
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise DownloadError(f"Entpacken fehlgeschlagen: {exc}") from exc
     missing = set(wanted_suffixes.values()) - {Path(p).name for p in extracted}
     if missing:
         raise DownloadError(
@@ -164,14 +180,21 @@ def mkvtoolnix_latest_version() -> str:
 def download_mkvtoolnix(tools_dir: Path, progress: ProgressCb,
                         cancel: threading.Event) -> DownloadResult:
     progress("Ermittle aktuelle Version …", None)
-    version = mkvtoolnix_latest_version()
+    try:
+        version = mkvtoolnix_latest_version()
+    except (OSError, gzip.BadGzipFile, ET.ParseError) as exc:
+        raise DownloadError(
+            f"mkvtoolnix.download nicht erreichbar: {exc}") from exc
     arch = "64" if os_is_64bit() else "32"
     filename = f"mkvtoolnix-{arch}-bit-{version}.zip"
     url = f"{MKVTOOLNIX_DL}/{version}/{filename}"
 
     progress("Lade Prüfsummen …", None)
-    expected = _expect_hash(
-        _get_text(f"{MKVTOOLNIX_DL}/{version}/sha256sums.txt"), filename)
+    try:
+        expected = _expect_hash(
+            _get_text(f"{MKVTOOLNIX_DL}/{version}/sha256sums.txt"), filename)
+    except OSError:
+        expected = None  # Prüfsumme optional, Download selbst nicht
 
     tools_dir.mkdir(parents=True, exist_ok=True)
     archive = tools_dir / filename

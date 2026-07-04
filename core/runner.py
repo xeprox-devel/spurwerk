@@ -46,27 +46,55 @@ class JobRunner:
     # ── öffentliche API ───────────────────────────────────────────────────
 
     def run(self, plans: list[FilePlan], settings: StereoSettings) -> int:
-        """Arbeitet alle Pläne ab; Rückgabe = Anzahl erfolgreicher Dateien."""
+        """Arbeitet alle Pläne ab; Rückgabe = Anzahl erfolgreicher Dateien.
+
+        BATCH_DONE ist per try/finally garantiert — die UI darf niemals auf
+        eine Abschlussnachricht warten, die nie kommt.
+        """
         total = len(plans)
         success = 0
-        for idx, plan in enumerate(plans):
-            if self.cancel.is_set():
-                plan.status = FileStatus.SKIPPED
-                self._file_status(plan)
-                continue
-            self.q.put(("PROGRESS_TOTAL", int(idx / total * 100)))
-            self.q.put(("LOG", "─" * 62, "dim"))
-            self.q.put(("LOG",
-                        f"Datei {idx + 1}/{total}: {Path(plan.media.path).name}",
-                        "step"))
-            self.q.put(("STATUS",
-                        f"[{idx + 1}/{total}] {Path(plan.media.path).name}"))
-            if self._run_single(plan, settings):
-                success += 1
-        self.q.put(("PROGRESS_FILE", 100))
-        self.q.put(("PROGRESS_TOTAL", 100))
-        self.q.put(("BATCH_DONE", success, total, self.cancel.is_set()))
+        try:
+            self._mark_output_collisions(plans)
+            for idx, plan in enumerate(plans):
+                if plan.status is FileStatus.ERROR:   # Kollision vorab erkannt
+                    self._file_status(plan)
+                    continue
+                if self.cancel.is_set():
+                    plan.status = FileStatus.SKIPPED
+                    self._file_status(plan)
+                    continue
+                self.q.put(("PROGRESS_TOTAL", int(idx / total * 100)))
+                self.q.put(("LOG", "─" * 62, "dim"))
+                self.q.put((
+                    "LOG",
+                    f"Datei {idx + 1}/{total}: {Path(plan.media.path).name}",
+                    "step"))
+                self.q.put((
+                    "STATUS",
+                    f"[{idx + 1}/{total}] {Path(plan.media.path).name}"))
+                if self._run_single(plan, settings):
+                    success += 1
+        finally:
+            self.q.put(("PROGRESS_FILE", 100))
+            self.q.put(("PROGRESS_TOTAL", 100))
+            self.q.put(("BATCH_DONE", success, total, self.cancel.is_set()))
         return success
+
+    def _mark_output_collisions(self, plans: list[FilePlan]) -> None:
+        """Zwei Quelldateien mit demselben Ausgabepfad: nur die erste läuft."""
+        seen: dict[str, str] = {}
+        for plan in plans:
+            key = os.path.normcase(os.path.abspath(plan.output_path))
+            if key in seen:
+                plan.status = FileStatus.ERROR
+                plan.error = (f"Ausgabepfad kollidiert mit "
+                              f"{Path(seen[key]).name} — bitte Ausgabename "
+                              f"oder -ordner ändern.")
+                self.q.put(("LOG",
+                            f"Übersprungen: {Path(plan.media.path).name} — "
+                            f"{plan.error}", "error"))
+            else:
+                seen[key] = plan.media.path
 
     def terminate_active(self) -> None:
         """Bricht den gerade laufenden Unterprozess ab (Cancel-Pfad der UI)."""
@@ -83,7 +111,9 @@ class JobRunner:
         self.q.put(("PROGRESS_FILE", 0))
 
         temp_dir: str | None = None
-        output_created = False   # nur selbst Erzeugtes darf aufgeräumt werden
+        # Aufräum-Regel: nur löschen, was DIESER Lauf nachweislich angefasst
+        # hat — nie das intakte Ergebnis eines früheren Laufs wegwerfen.
+        before_sig = self._output_signature(plan)
         try:
             self._validate(plan)
             stereo_tracks = plan.stereo_sources()
@@ -113,10 +143,12 @@ class JobRunner:
             Path(plan.output_path).parent.mkdir(parents=True, exist_ok=True)
             mux_cmd = build_mkvmerge_mux(
                 self.tools["mkvmerge"], plan, settings, stereo_files)
-            output_created = True
             self._run_mkvmerge(mux_cmd,
                                slice_start=(steps - 1) * 100 // steps,
                                slice_end=100)
+            # Abbruch mitten im Mux hinterlässt eine abgeschnittene Datei —
+            # das darf niemals als DONE enden.
+            self._check_cancel()
 
             plan.status = FileStatus.DONE
             self._file_status(plan)
@@ -127,15 +159,15 @@ class JobRunner:
             plan.status = FileStatus.SKIPPED
             plan.error = "abgebrochen"
             self._file_status(plan)
-            if output_created:
+            if self._output_signature(plan) != before_sig:
                 self._remove_partial(plan)
             return False
-        except (JobError, OSError, subprocess.SubprocessError) as exc:
+        except Exception as exc:  # letzte Verteidigung: Batch nie sterben lassen
             plan.status = FileStatus.ERROR
             plan.error = str(exc)
             self._file_status(plan)
             self.q.put(("LOG", f"  FEHLER: {exc}", "error"))
-            if output_created:
+            if self._output_signature(plan) != before_sig:
                 self._remove_partial(plan)
             return False
         finally:
@@ -160,14 +192,15 @@ class JobRunner:
 
     def _run_ffmpeg(self, cmd: list[str], duration_s: float,
                     slice_start: int, slice_end: int) -> None:
-        stderr_tail = self._stream_process(
+        returncode, stderr = self._stream_process(
             cmd,
             progress_cb=lambda line: self._ffmpeg_progress(
                 line, duration_s, slice_start, slice_end))
-        proc = self._active_proc
-        if proc and proc.returncode != 0 and not self.cancel.is_set():
+        if self.cancel.is_set():
+            return
+        if returncode != 0:
             raise JobError(
-                f"FFmpeg-Fehler (Exit {proc.returncode}): {stderr_tail[-600:]}")
+                f"FFmpeg-Fehler (Exit {returncode}): {stderr[-600:].strip()}")
 
     def _ffmpeg_progress(self, line: str, duration_s: float,
                          start: int, end: int) -> None:
@@ -192,26 +225,36 @@ class JobRunner:
                 self.q.put(("PROGRESS_FILE",
                             slice_start + int(frac * (slice_end - slice_start))))
 
-        stderr_tail = self._stream_process(cmd, progress_cb=on_line)
-        proc = self._active_proc
-        if proc is None or self.cancel.is_set():
+        returncode, stderr = self._stream_process(cmd, progress_cb=on_line)
+        if self.cancel.is_set():
             return
-        if proc.returncode == 1:
+        if returncode == 1:
             self.q.put(("LOG",
-                        f"  mkvmerge-Warnung: {stderr_tail[-300:].strip()}",
+                        f"  mkvmerge-Warnung: {stderr[-300:].strip()}",
                         "info"))
-        elif proc.returncode >= 2:
+        elif returncode != 0:   # >=2 = Fehler, negativ = per Signal beendet
             raise JobError(
-                f"mkvmerge-Fehler (Exit {proc.returncode}): "
-                f"{stderr_tail[-600:]}")
+                f"mkvmerge-Fehler (Exit {returncode}): "
+                f"{stderr[-600:].strip()}")
 
-    def _stream_process(self, cmd: list[str], progress_cb) -> str:
-        """Startet den Prozess, streamt stdout an progress_cb, sammelt stderr."""
+    def _stream_process(self, cmd: list[str], progress_cb) -> tuple[int, str]:
+        """Startet den Prozess, streamt stdout an progress_cb und liefert
+        (Returncode, stderr). stderr wird parallel in einem eigenen Thread
+        geleert — sonst blockiert das Kind, sobald es mehr als den
+        Pipe-Puffer (~64 KB) an Fehlermeldungen schreibt."""
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="ignore",
             creationflags=_CREATE_NO_WINDOW)
         self._active_proc = proc
+
+        stderr_chunks: list[str] = []
+        drain = threading.Thread(
+            target=lambda: stderr_chunks.append(
+                proc.stderr.read() if proc.stderr else ""),
+            daemon=True)
+        drain.start()
+
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -219,9 +262,9 @@ class JobRunner:
                     proc.terminate()
                     break
                 progress_cb(line.strip())
-            stderr = proc.stderr.read() if proc.stderr else ""
             proc.wait()
-            return stderr
+            drain.join(timeout=10)
+            return proc.returncode, "".join(stderr_chunks)
         finally:
             self._active_proc = None
 
@@ -233,6 +276,15 @@ class JobRunner:
 
     def _file_status(self, plan: FilePlan) -> None:
         self.q.put(("FILE_STATUS", plan.media.path, plan.status, plan.error))
+
+    @staticmethod
+    def _output_signature(plan: FilePlan) -> tuple[int, int] | None:
+        """Fingerabdruck der Ausgabedatei (None = existiert nicht)."""
+        try:
+            st = Path(plan.output_path).stat()
+            return (st.st_size, st.st_mtime_ns)
+        except OSError:
+            return None
 
     def _remove_partial(self, plan: FilePlan) -> None:
         try:

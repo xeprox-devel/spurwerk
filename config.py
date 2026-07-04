@@ -83,12 +83,18 @@ def _profile_from_dict(d: dict) -> RuleProfile:
 
 
 def _from_dict(data: dict) -> AppConfig:
+    profiles = [_profile_from_dict(p) for p in data.get("user_profiles", [])]
+    # Namenskollision mit Werksprofilen würde das Nutzerprofil unerreichbar
+    # verschatten (profile() nimmt den ersten Treffer) → umbenennen
+    builtin_names = {p.name for p in builtin_profiles()}
+    for profile in profiles:
+        if profile.name in builtin_names:
+            profile.name += " (eigenes)"
     return AppConfig(
         tools=dict(data.get("tools", {})),
         active_profile=data.get("active_profile", "Deutsch bevorzugt"),
         log_expanded=bool(data.get("log_expanded", False)),
-        user_profiles=[_profile_from_dict(p)
-                       for p in data.get("user_profiles", [])],
+        user_profiles=profiles,
     )
 
 
