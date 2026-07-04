@@ -1,0 +1,54 @@
+"""Einklappbares Protokoll mit Farbtags aus dem Theme."""
+
+from __future__ import annotations
+
+from tkinter import scrolledtext
+from typing import Callable
+
+import ttkbootstrap as ttk
+
+from . import theme
+from .sections import CollapsibleSection
+
+
+class LogPanel(CollapsibleSection):
+    def __init__(self, master, *, expanded: bool = False,
+                 on_toggle: Callable[[bool], None] | None = None):
+        super().__init__(master, "Protokoll", expanded=expanded,
+                         on_toggle=on_toggle)
+        self._count = 0
+
+        self.body.columnconfigure(0, weight=1)
+        self.body.rowconfigure(0, weight=1)
+
+        self.text = scrolledtext.ScrolledText(
+            self.body, wrap="word", height=9, state="disabled",
+            bg=theme.COLORS["dark"], fg=theme.COLORS["fg"],
+            insertbackground=theme.COLORS["fg"], relief="flat",
+            font=("Cascadia Mono", 9), borderwidth=0)
+        self.text.grid(row=0, column=0, sticky="nsew", pady=(2, 0))
+
+        self.text.tag_config("error", foreground=theme.COLORS["danger"])
+        self.text.tag_config("success", foreground=theme.COLORS["success"])
+        self.text.tag_config("info", foreground=theme.COLORS["info"])
+        self.text.tag_config("step", foreground=theme.COLORS["warning"])
+        self.text.tag_config("new", foreground=theme.COLORS["primary"])
+        self.text.tag_config("dim", foreground=theme.MUTED)
+
+        ttk.Button(self.body, text="Log leeren", bootstyle="secondary-link",
+                   command=self.clear).grid(row=1, column=0, sticky="e")
+
+    def log(self, message: str, tag: str | None = None) -> None:
+        self.text.config(state="normal")
+        self.text.insert("end", message + "\n", tag or ())
+        self.text.yview("end")
+        self.text.config(state="disabled")
+        self._count += 1
+        self.set_title(f"Protokoll ({self._count})")
+
+    def clear(self) -> None:
+        self.text.config(state="normal")
+        self.text.delete("1.0", "end")
+        self.text.config(state="disabled")
+        self._count = 0
+        self.set_title("Protokoll")
