@@ -161,6 +161,9 @@ class FilePlan:
     output_manual: bool = False               # Nutzer hat den Pfad selbst gesetzt
     status: FileStatus = FileStatus.READY
     error: str = ""
+    # Job-Queue-Prinzip: JEDE Datei trägt ihre eigene Konvertierungs-Config
+    stereo: StereoSettings = field(default_factory=StereoSettings)
+    profile_name: str = ""
 
     # ── Abfragen ──────────────────────────────────────────────────────────
 

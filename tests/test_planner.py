@@ -56,6 +56,17 @@ class TestStandardfall:
         plan = build_plan(film_std(), profile_de())
         assert Path(plan.output_path) == Path("C:/filme/test_remux.mkv")
 
+    def test_plan_erbt_eigene_konvertierungs_config(self):
+        # Job-Queue-Prinzip: der Plan bekommt eine KOPIE der Einstellungen
+        profile = profile_de()
+        profile.stereo.codec = "eac3"
+        plan = build_plan(film_std(), profile)
+        assert plan.profile_name == "Test DE"
+        assert plan.stereo.codec == "eac3"
+        assert plan.stereo is not profile.stereo   # Kopie, keine Referenz
+        plan.stereo.codec = "aac"
+        assert profile.stereo.codec == "eac3"      # Profil bleibt unberührt
+
 
 class TestFallbacksUndWarnungen:
     def test_kein_deutsch_erste_spur_plus_warnung(self):

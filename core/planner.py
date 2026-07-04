@@ -8,6 +8,7 @@ von `reapply_rules` respektiert.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from .langs import UND, display_name
 from .model import (Action, FilePlan, MediaInfo, Origin, RuleProfile, Track,
@@ -21,9 +22,13 @@ def is_commentary(track: Track) -> bool:
 
 
 def build_plan(media: MediaInfo, profile: RuleProfile) -> FilePlan:
-    """Erzeugt den automatischen Plan für eine Datei."""
+    """Erzeugt den automatischen Plan für eine Datei. Die Datei bekommt
+    eine EIGENE Kopie der Konvertierungs-Einstellungen (Job-Queue-Prinzip:
+    jede Datei im Batch kann anders konfiguriert sein)."""
     plan = FilePlan(media=media,
-                    output_path=profile.output.output_path_for(media.path))
+                    output_path=profile.output.output_path_for(media.path),
+                    stereo=replace(profile.stereo),
+                    profile_name=profile.name)
     _apply(plan, profile)
     return plan
 

@@ -189,6 +189,11 @@ class MainWindow(ttk.Frame):
                               command=self._edit_rules)
         edit_btn.grid(row=0, column=3, padx=(8, 0))
         self._lock_buttons.append(edit_btn)
+        apply_all_btn = ttk.Button(rules, text="Auf alle Dateien",
+                                   bootstyle="secondary-outline",
+                                   command=self._apply_to_all)
+        apply_all_btn.grid(row=0, column=4, padx=(6, 0))
+        self._lock_buttons.append(apply_all_btn)
         self.rule_label = ttk.Label(rules, foreground=theme.MUTED)
         self.rule_label.grid(row=0, column=2, sticky="w", padx=(14, 0))
 
@@ -373,7 +378,9 @@ class MainWindow(ttk.Frame):
         stereo = len(plan.stereo_sources())
         text = f"{kept}/{total} Spuren"
         if stereo:
-            text += f" · {stereo}× Stereo"
+            text += f" · {stereo}× {plan.stereo.short_label()}"
+        if plan.profile_name:
+            text += f" · {plan.profile_name}"
         tag = _STATUS_TAGS.get(plan.status, "")
         if plan.warnings and plan.status is FileStatus.READY:
             text += "  ⚠"
@@ -394,8 +401,8 @@ class MainWindow(ttk.Frame):
         audio_part = f"{counts['audio']}× Audio"
         if stereo:
             langs = ", ".join(display_name(t.lang) for t in stereo)
-            audio_part += (f" (NEU: {langs} {self.stereo.short_label()} "
-                           f"{self.stereo.bitrate})")
+            audio_part += (f" (NEU: {langs} {plan.stereo.short_label()} "
+                           f"{plan.stereo.bitrate})")
         parts.append(audio_part)
         parts.append(f"{counts['subtitles']}× Untertitel")
         if plan.media.has_chapters:
@@ -407,12 +414,15 @@ class MainWindow(ttk.Frame):
             text=("⚠ " + "  ·  ".join(plan.warnings)) if plan.warnings else "")
 
     def _update_stereo_panel_visibility(self) -> None:
-        any_stereo = any(p and p.stereo_sources() for p in self.plans.values())
+        # Das Panel zeigt und editiert die Konfiguration der AUSGEWÄHLTEN Datei
+        plan = self._selected_plan()
+        any_stereo = bool(plan and plan.stereo_sources())
         visible = bool(self.stereo_panel.winfo_manager())
-        count = sum(len(p.stereo_sources())
-                    for p in self.plans.values() if p)
-        self.stereo_panel.configure(
-            text=f" Audio-Konvertierung — wirkt auf {count} Spur(en) ")
+        if plan is not None:
+            count = len(plan.stereo_sources())
+            self.stereo_panel.configure(
+                text=f" Audio-Konvertierung · {Path(plan.media.path).name} "
+                     f"— wirkt auf {count} Spur(en) dieser Datei ")
         if any_stereo and not visible:
             self.stereo_panel.grid(row=4, column=0, sticky="ew", pady=(10, 0))
             self._autosize()
@@ -432,8 +442,12 @@ class MainWindow(ttk.Frame):
         text = f"▶  Start — {n} Datei{'en' if n != 1 else ''}"
         text += f" · {lossless} Spuren verlustfrei"
         if stereo:
+            labels = {p.stereo.short_label() for p in ready
+                      if p.stereo_sources()}
+            target = (f" → {labels.pop()}" if len(labels) == 1
+                      else " (Ziel je Datei)")
             text += (f" · {stereo} Konvertierung{'en' if stereo != 1 else ''}"
-                     f" → {self.stereo.short_label()}")
+                     f"{target}")
         self.start_btn.configure(
             text=text, state="disabled" if self._running else "normal")
 
@@ -513,7 +527,33 @@ class MainWindow(ttk.Frame):
 
     def _on_file_selected(self, path: str) -> None:
         self.selected = path
+        plan = self.plans.get(path)
+        if plan is not None:
+            # Panel & Profil zeigen die Konfiguration DIESER Datei;
+            # self.stereo ist eine Referenz — Panel-Änderungen landen direkt
+            # im Plan der Datei (Job-Queue-Prinzip)
+            self.profile = self.cfg.profile(
+                plan.profile_name or self.cfg.active_profile)
+            self.profile.output.directory = self.output_dir
+            self.stereo = plan.stereo
+            self._sync_panel_from_state()
         self._refresh_all()
+
+    def _sync_panel_from_state(self) -> None:
+        """Comboboxen/Felder auf self.profile + self.stereo stellen,
+        ohne Änderungs-Handler auszulösen."""
+        self.profile_cb.set(self.profile.name)
+        self.codec_cb.set(OUTPUT_CODECS[self.stereo.codec]["label"])
+        self.preset_cb.set(DOWNMIX_PRESETS[self.stereo.downmix_preset]["label"])
+        self.trackname_var.set(self.stereo.track_name)
+        self._last_suggested = self.stereo.suggested_track_name()
+        self._refresh_channels()
+        self._refresh_bitrates()
+        self._refresh_preset_hint()
+        self.preset_cb.configure(
+            state="disabled" if (self.stereo.channels != "2.0"
+                                 or self._running) else "readonly")
+        self.track_table.convert_label = self.stereo.short_label()
 
     def _file_context_menu(self, event) -> None:
         import os
@@ -552,26 +592,46 @@ class MainWindow(ttk.Frame):
     # ══ Regeln / Profil ══════════════════════════════════════════════════
 
     def _on_profile_changed(self, _event=None) -> None:
+        """Profilwechsel gilt für die AUSGEWÄHLTE Datei (Job-Queue-Prinzip);
+        ohne Auswahl stellt er die Vorlage für neue Dateien um."""
         self.profile = self.cfg.profile(self.profile_cb.get())
         self.cfg.active_profile = self.profile.name
         # fester Ausgabeordner ist App-Zustand und überlebt den Wechsel
         self.profile.output.directory = self.output_dir
-        self.stereo = replace(self.profile.stereo)
-        self.codec_cb.set(OUTPUT_CODECS[self.stereo.codec]["label"])
-        self.preset_cb.set(DOWNMIX_PRESETS[self.stereo.downmix_preset]["label"])
-        self.trackname_var.set(self.stereo.track_name)
-        self._last_suggested = self.stereo.suggested_track_name()
+
+        plan = self._selected_plan()
+        if plan is not None:
+            plan.profile_name = self.profile.name
+            plan.stereo = replace(self.profile.stereo)
+            self.stereo = plan.stereo
+            reapply_rules(plan, self.profile)
+            if not plan.output_manual:
+                plan.output_path = self.profile.output.output_path_for(
+                    plan.media.path)
+        else:
+            self.stereo = replace(self.profile.stereo)
+
         self.stereo_default_var.set(self.profile.stereo_make_default)
-        self._refresh_channels()
-        self._refresh_bitrates()
-        self._refresh_preset_hint()
-        self.track_table.convert_label = self.stereo.short_label()
-        for path, plan in self.plans.items():
-            if plan is not None:
-                reapply_rules(plan, self.profile)
-                if not plan.output_manual:
-                    plan.output_path = self.profile.output.output_path_for(path)
+        self._sync_panel_from_state()
         self._refresh_all()
+
+    def _apply_to_all(self) -> None:
+        """Aktuelles Profil + Konvertierungs-Einstellungen auf alle Dateien
+        übertragen (manuelle Spur-Overrides bleiben geschützt)."""
+        for path, plan in self.plans.items():
+            if plan is None:
+                continue
+            plan.profile_name = self.profile.name
+            plan.stereo = replace(self.stereo)
+            reapply_rules(plan, self.profile)
+            if not plan.output_manual:
+                plan.output_path = self.profile.output.output_path_for(path)
+        selected = self._selected_plan()
+        if selected is not None:
+            self.stereo = selected.stereo
+        self._refresh_all()
+        self.log.log(f"Profil „{self.profile.name}“ + Einstellungen auf "
+                     f"alle Dateien angewendet.", "info")
 
     def _edit_rules(self) -> None:
         from .rule_editor import RuleEditorDialog
@@ -676,21 +736,21 @@ class MainWindow(ttk.Frame):
         self.preset_hint.configure(text="ⓘ " + hint)
 
     def _on_stereo_default_toggled(self) -> None:
-        make_default = self.stereo_default_var.get()
-        for plan in self.plans.values():
-            if plan is None:
-                continue
-            stereo = plan.stereo_sources()
-            if not stereo:
-                continue
-            if make_default:
-                plan.set_default_audio(stereo[0].id, on_stereo=True)
-            else:
-                plan.default_audio_source = None
-                plan._ensure_default_valid()
-                if plan.default_audio_is_stereo and plan.kept_ids("audio"):
-                    plan.set_default_audio(plan.kept_ids("audio")[0],
-                                           on_stereo=False)
+        """Wirkt — wie das ganze Panel — nur auf die ausgewählte Datei."""
+        plan = self._selected_plan()
+        if plan is None:
+            return
+        stereo = plan.stereo_sources()
+        if not stereo:
+            return
+        if self.stereo_default_var.get():
+            plan.set_default_audio(stereo[0].id, on_stereo=True)
+        else:
+            plan.default_audio_source = None
+            plan._ensure_default_valid()
+            if plan.default_audio_is_stereo and plan.kept_ids("audio"):
+                plan.set_default_audio(plan.kept_ids("audio")[0],
+                                       on_stereo=False)
         self.track_table.refresh()
         self._update_preview()
 
@@ -781,8 +841,7 @@ class MainWindow(ttk.Frame):
         run_plans = [copy.deepcopy(p) for p in plans]
         self.runner = JobRunner(self.tools, self.ui_q, self.cancel)
         self._worker = threading.Thread(
-            target=self.runner.run,
-            args=(run_plans, replace(self.stereo)), daemon=True)
+            target=self.runner.run, args=(run_plans,), daemon=True)
         self._worker.start()
 
     def _set_running(self, running: bool) -> None:
@@ -843,6 +902,9 @@ class MainWindow(ttk.Frame):
             if path not in self.plans:
                 return   # Datei wurde während des Scans entfernt
             plan = build_plan(media, self.profile)
+            # neue Dateien erben die gerade sichtbare Konfiguration
+            plan.stereo = replace(self.stereo)
+            plan.profile_name = self.profile.name
             self.plans[path] = plan
             self._update_file_row(path, plan)
             for warning in plan.warnings:
@@ -886,6 +948,30 @@ class MainWindow(ttk.Frame):
                               duration=4000, bootstyle=style).show_toast()
         except Exception:
             pass  # Toast ist Komfort, nie ein Absturzgrund
+        if success:
+            # erledigte Dateien verlassen die Warteschlange (kurz verzögert,
+            # damit der grüne „fertig“-Status sichtbar bleibt)
+            self.after(1500, self._remove_done_files)
+
+    def _remove_done_files(self) -> None:
+        """Job-Queue-Verhalten: erfolgreich verarbeitete Dateien fliegen aus
+        der Liste — Fehler und Übersprungenes bleiben sichtbar stehen.
+        Die QUELLDATEIEN werden selbstverständlich nicht angetastet."""
+        done = [path for path, plan in self.plans.items()
+                if plan and plan.status is FileStatus.DONE]
+        if not done:
+            return
+        for path in done:
+            self.plans.pop(path, None)
+            self.file_list.remove(path)
+        self.log.log(f"{len(done)} erledigte Datei(en) aus der Liste "
+                     f"entfernt.", "dim")
+        if self.selected not in self.plans:
+            self.selected = next(iter(self.plans), None)
+            if self.selected:
+                self.file_list.select(self.selected)
+        self._sync_state()
+        self._refresh_all()
 
     # ══ Tools ════════════════════════════════════════════════════════════
 

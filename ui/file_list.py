@@ -38,9 +38,9 @@ class FileList(ttk.Frame):
         self.tree.heading("dauer", text="Dauer", anchor="w")
         self.tree.heading("plan", text="Plan", anchor="w")
         self.tree.heading("status", text="Status", anchor="w")
-        self.tree.column("#0", width=scale(330), stretch=True)
+        self.tree.column("#0", width=scale(300), stretch=True)
         self.tree.column("dauer", width=scale(80), stretch=False)
-        self.tree.column("plan", width=scale(230), stretch=False)
+        self.tree.column("plan", width=scale(300), stretch=False)
         self.tree.column("status", width=scale(110), stretch=False)
         self.tree.grid(row=0, column=0, sticky="nsew")
 
@@ -88,6 +88,10 @@ class FileList(ttk.Frame):
         for iid in removed:
             self.tree.delete(iid)
         return removed
+
+    def remove(self, path: str) -> None:
+        if self.tree.exists(path):
+            self.tree.delete(path)
 
     def clear(self) -> None:
         self.tree.delete(*self.tree.get_children())

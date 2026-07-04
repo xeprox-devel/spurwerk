@@ -29,10 +29,10 @@ pytestmark = pytest.mark.skipif(
 
 def run_plan(fixture: str, profile, tmp_path: Path):
     media = scan_file(TOOLS["mkvmerge"], str(FIXTURES / fixture))
-    plan = build_plan(media, profile)
+    plan = build_plan(media, profile)   # Plan erbt profile.stereo als Kopie
     plan.output_path = str(tmp_path / f"out_{fixture}")
     runner = JobRunner(TOOLS, queue.Queue())
-    ok = runner.run([plan], profile.stereo) == 1
+    ok = runner.run([plan]) == 1
     return plan, ok
 
 
@@ -166,7 +166,7 @@ def test_mkvmerge_fehler_wird_gemeldet(tmp_path):
     plan.output_path = str(tmp_path / "out.mkv")
 
     runner = JobRunner(TOOLS, queue.Queue())
-    assert runner.run([plan], StereoSettings()) == 0
+    assert runner.run([plan]) == 0
     assert plan.status is FileStatus.ERROR
     assert "mkvmerge" in plan.error
     assert not Path(plan.output_path).exists()
@@ -182,7 +182,7 @@ def test_ffmpeg_fehler_wird_gemeldet(tmp_path):
     plan.output_path = str(tmp_path / "out.mkv")
 
     runner = JobRunner(TOOLS, queue.Queue())
-    assert runner.run([plan], StereoSettings(bitrate="192k")) == 0
+    assert runner.run([plan]) == 0
     assert plan.status is FileStatus.ERROR
     assert "FFmpeg" in plan.error
 
@@ -202,7 +202,7 @@ def test_altes_ergebnis_bleibt_bei_fruehem_fehler(tmp_path):
     plan.output_path = str(old_output)
 
     runner = JobRunner(TOOLS, queue.Queue())
-    assert runner.run([plan], StereoSettings()) == 0
+    assert runner.run([plan]) == 0
     assert plan.status is FileStatus.ERROR
     assert old_output.read_bytes() == b"intaktes ergebnis von gestern"
 
@@ -217,7 +217,7 @@ def test_ausgabe_kollision_im_batch(tmp_path):
     p2.output_path = str(tmp_path / "GLEICH.mkv")   # case-insensitiv gleich
 
     runner = JobRunner(TOOLS, queue.Queue())
-    assert runner.run([p1, p2], StereoSettings()) == 1
+    assert runner.run([p1, p2]) == 1
     assert p1.status is FileStatus.DONE
     assert p2.status is FileStatus.ERROR
     assert "kollidiert" in p2.error
@@ -233,7 +233,34 @@ def test_fehler_isoliert_pro_datei(tmp_path):
     good.output_path = str(tmp_path / "gut.mkv")
 
     runner = JobRunner(TOOLS, queue.Queue())
-    assert runner.run([bad, good], StereoSettings()) == 1
+    assert runner.run([bad, good]) == 1
     assert bad.status is FileStatus.ERROR
     assert good.status is FileStatus.DONE
     assert (FIXTURES / "film_und.mkv").stat().st_size > 0   # Quelle unversehrt
+
+
+def test_batch_mit_config_pro_datei(tmp_path):
+    """Job-Queue-Prinzip: zwei Dateien, zwei verschiedene Zielformate,
+    EIN Start — jede wird mit ihrer eigenen Config verarbeitet."""
+    m1 = scan_file(TOOLS["mkvmerge"], str(FIXTURES / "film_std.mkv"))
+    m2 = scan_file(TOOLS["mkvmerge"], str(FIXTURES / "film_71.mkv"))
+
+    p1 = build_plan(m1, profile_de())
+    p1.stereo = StereoSettings(codec="ac3", channels="2.0", bitrate="192k",
+                               track_name="Stereo AC3")
+    p1.output_path = str(tmp_path / "a.mkv")
+
+    p2 = build_plan(m2, profile_de())
+    p2.stereo = StereoSettings(codec="eac3", channels="5.1", bitrate="640k",
+                               track_name="E-AC3 5.1")
+    p2.output_path = str(tmp_path / "b.mkv")
+
+    runner = JobRunner(TOOLS, queue.Queue())
+    assert runner.run([p1, p2]) == 2
+
+    out1 = scan_file(TOOLS["mkvmerge"], p1.output_path).audio_tracks[-1]
+    assert (out1.codec_id, out1.channels, out1.name) == ("A_AC3", 2,
+                                                         "Stereo AC3")
+    out2 = scan_file(TOOLS["mkvmerge"], p2.output_path).audio_tracks[-1]
+    assert (out2.codec_id, out2.channels, out2.name) == ("A_EAC3", 6,
+                                                         "E-AC3 5.1")

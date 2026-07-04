@@ -25,7 +25,7 @@ import threading
 from pathlib import Path
 
 from .commands import build_ffmpeg_downmix, build_mkvmerge_mux, stereo_temp_name
-from .model import FilePlan, FileStatus, StereoSettings
+from .model import FilePlan, FileStatus
 
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _GUI_PROGRESS_RE = re.compile(r"#GUI#progress (\d+)%")
@@ -45,8 +45,9 @@ class JobRunner:
 
     # ── öffentliche API ───────────────────────────────────────────────────
 
-    def run(self, plans: list[FilePlan], settings: StereoSettings) -> int:
-        """Arbeitet alle Pläne ab; Rückgabe = Anzahl erfolgreicher Dateien.
+    def run(self, plans: list[FilePlan]) -> int:
+        """Arbeitet alle Pläne ab — jeder mit SEINEN eigenen
+        Konvertierungs-Einstellungen (plan.stereo). Rückgabe = Erfolge.
 
         BATCH_DONE ist per try/finally garantiert — die UI darf niemals auf
         eine Abschlussnachricht warten, die nie kommt.
@@ -72,7 +73,7 @@ class JobRunner:
                 self.q.put((
                     "STATUS",
                     f"[{idx + 1}/{total}] {Path(plan.media.path).name}"))
-                if self._run_single(plan, settings):
+                if self._run_single(plan):
                     success += 1
         finally:
             self.q.put(("PROGRESS_FILE", 100))
@@ -104,7 +105,8 @@ class JobRunner:
 
     # ── eine Datei ────────────────────────────────────────────────────────
 
-    def _run_single(self, plan: FilePlan, settings: StereoSettings) -> bool:
+    def _run_single(self, plan: FilePlan) -> bool:
+        settings = plan.stereo
         plan.status = FileStatus.RUNNING
         plan.error = ""
         self._file_status(plan)
