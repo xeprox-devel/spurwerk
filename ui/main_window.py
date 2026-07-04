@@ -168,6 +168,8 @@ class MainWindow(ttk.Frame):
         self.profile_cb.set(self.profile.name)
         self.profile_cb.grid(row=0, column=1)
         self.profile_cb.bind("<<ComboboxSelected>>", self._on_profile_changed)
+        ttk.Button(rules, text="Bearbeiten …", bootstyle="secondary-outline",
+                   command=self._edit_rules).grid(row=0, column=3, padx=(8, 0))
         self.rule_label = ttk.Label(rules, foreground=theme.MUTED)
         self.rule_label.grid(row=0, column=2, sticky="w", padx=(14, 0))
 
@@ -477,6 +479,38 @@ class MainWindow(ttk.Frame):
                 reapply_rules(plan, self.profile)
                 plan.output_path = self.profile.output.output_path_for(path)
         self._refresh_all()
+
+    def _edit_rules(self) -> None:
+        from .rule_editor import RuleEditorDialog
+        dialog = RuleEditorDialog(
+            self, self.profile,
+            existing_names=[p.name for p in self.cfg.all_profiles()])
+        self.wait_window(dialog)
+        if dialog.result is None:
+            return
+        action, profile = dialog.result
+
+        if action == "apply":
+            self.cfg.user_profiles = [
+                profile if p.name == profile.name else p
+                for p in self.cfg.user_profiles]
+            self.profile = profile
+        elif action == "new":
+            self.cfg.user_profiles.append(profile)
+            self.profile = profile
+        elif action == "delete":
+            self.cfg.user_profiles = [
+                p for p in self.cfg.user_profiles if p.name != profile.name]
+            self.profile = self.cfg.all_profiles()[0]
+
+        self.cfg.active_profile = self.profile.name
+        self.profile_cb.configure(
+            values=[p.name for p in self.cfg.all_profiles()])
+        self.profile_cb.set(self.profile.name)
+        appconfig.save(self.cfg)
+        self._on_profile_changed()
+        if not self.plans:
+            self._sync_state()   # Leerzustand-Beschreibung aktualisieren
 
     def _reset_selected_to_rule(self) -> None:
         plan = self._selected_plan()
