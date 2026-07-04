@@ -144,6 +144,7 @@ class FilePlan:
     default_audio_source: int | None = None   # Quell-Track-ID
     default_audio_is_stereo: bool = False     # Flag liegt auf der Stereo-Kopie
     output_path: str = ""
+    output_manual: bool = False               # Nutzer hat den Pfad selbst gesetzt
     status: FileStatus = FileStatus.READY
     error: str = ""
 

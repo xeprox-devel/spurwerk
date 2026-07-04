@@ -163,6 +163,7 @@ class MainWindow(ttk.Frame):
 
         self.file_list = FileList(self.work, on_select=self._on_file_selected)
         self.file_list.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
+        self.file_list.tree.bind("<Button-3>", self._file_context_menu)
 
         # ── Regeln ────────────────────────────────────────────────────────
         rules = ttk.Frame(self.work)
@@ -298,7 +299,11 @@ class MainWindow(ttk.Frame):
             variable=self.stereo_default_var, bootstyle="primary",
             command=self._on_stereo_default_toggled).pack(side="left")
 
+        self.preset_hint = ttk.Label(panel, foreground=theme.MUTED)
+        self.preset_hint.pack(anchor="w", pady=(6, 0))
+
         self._refresh_bitrates()
+        self._refresh_preset_hint()
 
     # ══ Zustand / Anzeige ════════════════════════════════════════════════
 
@@ -470,6 +475,40 @@ class MainWindow(ttk.Frame):
         self.selected = path
         self._refresh_all()
 
+    def _file_context_menu(self, event) -> None:
+        import os
+        import tkinter as tk
+        path = self.file_list.tree.identify_row(event.y)
+        if not path:
+            return
+        self.file_list.select(path)
+        plan = self.plans.get(path)
+        menu = tk.Menu(self, tearoff=0)
+        if plan is not None:
+            menu.add_command(label="Ausgabename/-ort ändern …",
+                             command=lambda: self._change_output(plan))
+            menu.add_command(
+                label="Ausgabeordner öffnen",
+                command=lambda: os.startfile(Path(plan.output_path).parent))
+        menu.add_command(label="Quellordner öffnen",
+                         command=lambda: os.startfile(Path(path).parent))
+        menu.add_separator()
+        menu.add_command(label="Aus der Liste entfernen",
+                         command=self._remove_selected)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _change_output(self, plan: FilePlan) -> None:
+        current = Path(plan.output_path)
+        chosen = filedialog.asksaveasfilename(
+            parent=self, title="Ausgabedatei wählen",
+            initialdir=str(current.parent), initialfile=current.name,
+            defaultextension=".mkv",
+            filetypes=[("MKV-Dateien", "*.mkv")])
+        if chosen:
+            plan.output_path = chosen
+            plan.output_manual = True
+            self._update_preview()
+
     # ══ Regeln / Profil ══════════════════════════════════════════════════
 
     def _on_profile_changed(self, _event=None) -> None:
@@ -484,7 +523,8 @@ class MainWindow(ttk.Frame):
         for path, plan in self.plans.items():
             if plan is not None:
                 reapply_rules(plan, self.profile)
-                plan.output_path = self.profile.output.output_path_for(path)
+                if not plan.output_manual:
+                    plan.output_path = self.profile.output.output_path_for(path)
         self._refresh_all()
 
     def _edit_rules(self) -> None:
@@ -548,7 +588,12 @@ class MainWindow(ttk.Frame):
         self.stereo.bitrate = self.bitrate_cb.get()
         self.stereo.downmix_preset = self._preset_by_label[self.preset_cb.get()]
         self.stereo.track_name = self.trackname_var.get().strip() or "Stereo"
+        self._refresh_preset_hint()
         self._update_preview()
+
+    def _refresh_preset_hint(self) -> None:
+        self.preset_hint.configure(
+            text="ⓘ " + DOWNMIX_PRESETS[self.stereo.downmix_preset]["hint"])
 
     def _on_stereo_default_toggled(self) -> None:
         make_default = self.stereo_default_var.get()
@@ -592,7 +637,7 @@ class MainWindow(ttk.Frame):
         label = Path(folder).name if folder else "Quellordner"
         self.output_btn.configure(text=f"Ausgabe: {label}  ▾")
         for path, plan in self.plans.items():
-            if plan is not None:
+            if plan is not None and not plan.output_manual:
                 plan.output_path = self.profile.output.output_path_for(path)
         self._update_preview()
 
