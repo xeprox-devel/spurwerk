@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Nutzer-/Maschinenspezifisch
+config.ini
+config.json
+
+# Externe Tool-Binaries (werden vom Downloader geholt)
+tools/
+
+# Laufzeit-/Temporärdaten
+temp_mkv_process/
+
+# Generierte Test-Medien (Skript: tests/make_fixtures.py)
+tests/fixtures/
+
+# Build-Artefakte
+build/
+dist/
+*.spec
