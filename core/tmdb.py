@@ -83,6 +83,4 @@ def canonical_name(api_key: str, filename: str,
     name = best.get("title") or best.get("original_title")
     if not name:
         return None
-    release_year = str(best.get("release_date", ""))[:4]
-    clean = f"{name} ({release_year})" if release_year else name
-    return _ILLEGAL.sub("", clean).strip()
+    return _ILLEGAL.sub("", name).strip()   # nur der Titel, ohne Jahr

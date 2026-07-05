@@ -47,9 +47,8 @@ def clean_filename(name: str, keep_ext: str | None = None) -> str:
     from pathlib import Path
     p = Path(name)
     ext = keep_ext if keep_ext is not None else p.suffix
-    title, year = clean_title(p.stem)
+    title, _year = clean_title(p.stem)       # Jahr nur zur Suche, nicht im Namen
     if not title:
         title = p.stem                       # nichts erkannt: unverändert
-    clean = f"{title} ({year})" if year else title
-    clean = _ILLEGAL.sub("", clean).strip()
+    clean = _ILLEGAL.sub("", title).strip()
     return f"{clean}{ext}"

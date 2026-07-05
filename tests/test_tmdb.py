@@ -30,7 +30,7 @@ def test_canonical_name_baut_titel(monkeypatch):
     got = tmdb.canonical_name(
         "KEY",
         "Obsession.Du.sollst.mich.lieben.2025.UHD.WEB-DL.2160p.HEVC.mkv")
-    assert got == "Obsession – Du sollst mich lieben (2025)"
+    assert got == "Obsession – Du sollst mich lieben"    # nur Titel, kein Jahr
 
 
 def test_ohne_key_kein_call():

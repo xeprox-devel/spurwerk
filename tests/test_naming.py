@@ -3,10 +3,10 @@
 from core.naming import clean_filename, clean_title
 
 
-def test_release_name_mit_jahr():
+def test_release_name_nur_titel_ohne_jahr():
     raw = ("Obsession.Du.sollst.mich.lieben.2025.UHD.WEB-DL.2160p.HEVC.DV."
            "HDR10Plus.EAC3.DL.Remux-TvR.mkv")
-    assert clean_filename(raw) == "Obsession Du sollst mich lieben (2025).mkv"
+    assert clean_filename(raw) == "Obsession Du sollst mich lieben.mkv"
 
 
 def test_unterstriche_und_tags_ohne_jahr():
