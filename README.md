@@ -23,11 +23,18 @@ Dein Fernseher, deine Soundbar oder dein Tablet kann kein DTS oder kein
 oder AAC-Spur — wahlweise in 5.1 oder Stereo, mit hochwertigen
 Downmix-Profilen. Das Original kannst du behalten oder ersetzen.
 
-**🎨 4K-Farbstich reparieren (Dolby Vision):**
-Manche 4K-MKVs (Dolby Vision Profil 7) zeigen auf vielen Geräten einen
-Grün-/Lilastich. Spurwerk erkennt das automatisch und entfernt auf
-Wunsch die Dolby-Vision-Daten — übrig bleibt normales HDR10, das überall
-läuft. Auch das: 100 % verlustfrei, Atmos-Ton und Untertitel bleiben.
+**🎨 Dolby Vision — behalten oder anpassen (verlustfrei):**
+Manche 4K-MKVs mit Dolby Vision zeigen auf einigen Geräten einen
+Grün-/Lilastich, auf anderen laufen sie einwandfrei. Spurwerk erkennt
+das Format automatisch und gibt dir pro Datei (Rechtsklick auf die
+Videospur) die Wahl:
+- **Kopieren** — Video unangetastet, DV (und HDR10+) bleiben komplett
+- **DV entfernen → HDR10** — DV raus, reines HDR10 (läuft überall),
+  HDR10+ bleibt erhalten, Ton und Untertitel 1:1
+- **DV → Profil 8.1 (MP4)** — DV-MP4 für zertifizierte Geräte
+
+Alle drei ohne Neuberechnung des Bildes. Profil 5 (kein HDR10-Fallback)
+wird mit Begründung gesperrt, statt kaputte Farben zu erzeugen.
 
 **🗂 Viele Dateien auf einmal:**
 Ganze Serienstaffel reinziehen, Regeln einmal festlegen (oder pro Datei
@@ -93,12 +100,12 @@ Windows 10/11 (64-bit). Die Werkzeuge lädt Spurwerk selbst.
 ## Die Werkzeuge dahinter
 
 Spurwerk orchestriert bewährte freie Software: **MKVToolNix**
-(mkvtoolnix.download), **FFmpeg** (gyan.dev/BtbN) und **dovi_tool**
-(quietvoid) — alle unter GPL/Open-Source-Lizenzen. Spurwerk liefert sie
-nicht mit, sondern lädt sie auf Wunsch von den offiziellen Quellen,
-geprüft per SHA-256. Für „DV → Profil 8.1 (MP4)" wird zusätzlich
-**MP4Box** (gpac.io) benötigt — einmal installieren, Pfad im
-⚙-Werkzeuge-Dialog wählen.
+(mkvtoolnix.download), **FFmpeg** (gyan.dev/BtbN) und — für die
+Dolby-Vision-Funktionen — **dovi_tool** (quietvoid). Alle unter
+GPL/Open-Source-Lizenzen. Spurwerk liefert sie nicht mit, sondern lädt
+sie auf Wunsch per Ein-Klick von den offiziellen Quellen, geprüft per
+SHA-256. Mehr Werkzeuge sind nicht nötig — auch DV → Profil 8.1 (MP4)
+läuft allein mit FFmpeg.
 
 ---
 
