@@ -731,14 +731,14 @@ class MainWindow(ttk.Frame):
         base = Path(self.profile.output.output_path_for(plan.media.path))
         stem = base.stem
         if self.cfg.clean_names or plan.canonical_name:
-            # TMDb-Titel bevorzugen, sonst Offline-Bereinigung
+            # TMDb-Titel bevorzugen, sonst Offline-Bereinigung. Kein
+            # „_remux“-Suffix — der bereinigte Name unterscheidet sich
+            # ohnehin vom Original, das Suffix wäre nur unschön.
             if plan.canonical_name:
-                cleaned = plan.canonical_name
+                stem = plan.canonical_name
             else:
                 from core.naming import clean_filename
-                cleaned = Path(clean_filename(Path(plan.media.path).name)).stem
-            suffix = self.profile.output.suffix or ""
-            stem = f"{cleaned}{suffix}"
+                stem = Path(clean_filename(Path(plan.media.path).name)).stem
         if plan.video_mode == dv_analysis.VIDEO_MODE_HDR10:
             name = f"{stem} [HDR10].mkv"
         elif plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
