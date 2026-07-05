@@ -44,9 +44,12 @@ sichtbar. Deine Warteschlange und Einstellungen bleiben beim nächsten
 Start erhalten.
 
 **🏷 Saubere Dateinamen (optional):**
-Aus `Film.2025.UHD.WEB-DL.HEVC…mkv` wird `Film (2025).mkv`. Mit einem
-kostenlosen TMDb-API-Key (themoviedb.org) sogar der exakte Filmtitel
-inkl. Schreibweise. Umschaltbar im Ausgabe-Menü.
+Aus `Film.2025.UHD.WEB-DL.HEVC…mkv` wird `Film (2025).mkv` — komplett
+offline. Auf Wunsch gleicht Spurwerk den Titel zusätzlich online mit
+**TMDb** ab und liefert die exakte Schreibweise (z. B. „Obsession – Du
+sollst mich lieben (2025)"). Je nach Ausgabe funktioniert das direkt
+oder mit einem eigenen, kostenlosen TMDb-Key. Alles umschaltbar im
+Ausgabe-Menü; ohne Netz greift immer die Offline-Variante.
 
 ## So startest du
 
@@ -112,6 +115,9 @@ GPL/Open-Source-Lizenzen. Spurwerk liefert sie nicht mit, sondern lädt
 sie auf Wunsch per Ein-Klick von den offiziellen Quellen, geprüft per
 SHA-256. Mehr Werkzeuge sind nicht nötig — auch DV → Profil 8.1 (MP4)
 läuft allein mit FFmpeg.
+
+Der optionale Titelabgleich nutzt die **TMDb-API**, ist aber nicht von
+TMDb unterstützt oder zertifiziert.
 
 ---
 
