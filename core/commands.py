@@ -53,20 +53,40 @@ def build_ffmpeg_downmix(ffmpeg: str, plan: FilePlan, track: Track,
 
 
 def build_mkvmerge_mux(mkvmerge: str, plan: FilePlan, settings: StereoSettings,
-                       stereo_files: dict[int, str]) -> list[str]:
+                       stereo_files: dict[int, str],
+                       video_file: str | None = None) -> list[str]:
     """Der eine finale Mux-Lauf: Quelle (mit Spurauswahl) + n Stereo-Dateien.
 
     `stereo_files` bildet Quell-Track-ID → Pfad der erzeugten Stereo-Datei ab.
+    `video_file` (DV/HDR-Remux): ersetzt die Videospur der Quelle durch den
+    bereinigten HEVC-Stream — die Quelle liefert dann nur noch Audio/Subs/
+    Kapitel (--no-video), das Video kommt als eigene Eingabedatei davor.
     """
     media = plan.media
     cmd = [mkvmerge, "--gui-mode", "-o", plan.output_path]
+
+    # Datei-IDs für --track-order: [video_file,] Quelle, Stereo-Dateien …
+    source_fid = 1 if video_file else 0
+
+    if video_file:
+        first_video = next(iter(media.by_type("video")), None)
+        if first_video is not None:
+            if first_video.lang != "und":
+                cmd += ["--language", f"0:{first_video.lang}"]
+            if first_video.name:
+                cmd += ["--track-name", f"0:{first_video.name}"]
+        cmd += ["--default-track-flag", "0:yes", video_file]
 
     # ── Spurauswahl der Quelldatei ────────────────────────────────────────
     kept_video = plan.kept_ids("video")
     kept_audio = plan.kept_ids("audio")
     kept_subs = plan.kept_ids("subtitles")
 
-    cmd += (["--video-tracks", _ids(kept_video)] if kept_video else ["--no-video"])
+    if video_file:
+        cmd += ["--no-video"]
+    else:
+        cmd += (["--video-tracks", _ids(kept_video)] if kept_video
+                else ["--no-video"])
     cmd += (["--audio-tracks", _ids(kept_audio)] if kept_audio else ["--no-audio"])
     cmd += (["--subtitle-tracks", _ids(kept_subs)] if kept_subs else ["--no-subtitles"])
 
@@ -91,8 +111,9 @@ def build_mkvmerge_mux(mkvmerge: str, plan: FilePlan, settings: StereoSettings,
             cmd += ["--sync", f"0:{track.delay_ms}"]
         cmd.append(stereo_files[track.id])
 
-    if stereo_tracks:
-        cmd += ["--track-order", _track_order(plan, stereo_tracks)]
+    if stereo_tracks or video_file:
+        cmd += ["--track-order",
+                _track_order(plan, stereo_tracks, source_fid, video_file)]
 
     return cmd
 
@@ -101,23 +122,29 @@ def _ids(track_ids: list[int]) -> str:
     return ",".join(str(i) for i in track_ids)
 
 
-def _track_order(plan: FilePlan, stereo_tracks: list[Track]) -> str:
+def _track_order(plan: FilePlan, stereo_tracks: list[Track],
+                 source_fid: int = 0, video_file: str | None = None) -> str:
     """Reihenfolge: Video → Audio (Stereo direkt hinter/statt der Quelle) → Subs.
 
-    Datei-IDs: 0 = Quelldatei, 1..n = Stereo-Dateien in Anhäng-Reihenfolge.
+    Datei-IDs: [0 = bereinigtes Video,] source_fid = Quelle, danach die
+    Stereo-Dateien in Anhäng-Reihenfolge.
     """
-    file_of_stereo = {t.id: i + 1 for i, t in enumerate(stereo_tracks)}
+    file_of_stereo = {t.id: source_fid + 1 + i
+                      for i, t in enumerate(stereo_tracks)}
     order: list[str] = []
-    for t in plan.media.by_type("video"):
-        if plan.decisions[t.id].action.keeps_original:
-            order.append(f"0:{t.id}")
+    if video_file:
+        order.append("0:0")
+    else:
+        for t in plan.media.by_type("video"):
+            if plan.decisions[t.id].action.keeps_original:
+                order.append(f"{source_fid}:{t.id}")
     for t in plan.media.audio_tracks:
         dec = plan.decisions[t.id]
         if dec.action.keeps_original:
-            order.append(f"0:{t.id}")
+            order.append(f"{source_fid}:{t.id}")
         if dec.action.is_stereo:
             order.append(f"{file_of_stereo[t.id]}:0")
     for t in plan.media.by_type("subtitles"):
         if plan.decisions[t.id].action.keeps_original:
-            order.append(f"0:{t.id}")
+            order.append(f"{source_fid}:{t.id}")
     return ",".join(order)

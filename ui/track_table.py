@@ -39,6 +39,8 @@ class TrackTable(ttk.Frame):
         self.plan: FilePlan | None = None
         self.locked = False   # während eines Laufs sind Pläne eingefroren
         self.convert_label = "Stereo AC3"   # z. B. "E-AC3 5.1", vom Panel gesetzt
+        self.dovi_ok = False    # dovi_tool verfügbar (vom Hauptfenster gesetzt)
+        self.mp4box_ok = False
         self._images = theme.make_check_images(self)   # Referenzen halten!
 
         self.columnconfigure(0, weight=1)
@@ -109,10 +111,27 @@ class TrackTable(ttk.Frame):
             Action.DROP: "—",
         }[action]
 
+    _VIDEO_MODE_LABELS = {"hdr10": "DV entfernen → HDR10",
+                          "dv81": "DV → 8.1 (MP4)"}
+
+    def _is_first_video(self, track: Track) -> bool:
+        videos = self.plan.media.by_type("video")
+        return bool(videos) and videos[0].id == track.id
+
     def _row_values(self, track: Track) -> tuple:
         dec = self.plan.decisions[track.id]
-        action = self._action_label(dec.action)
-        if track.type == "audio" and dec.action is not Action.DROP:
+        if (track.type == "video" and dec.action.keeps_original
+                and self.plan.video_mode != "copy"
+                and self._is_first_video(track)):
+            action = self._VIDEO_MODE_LABELS.get(self.plan.video_mode,
+                                                 "Kopieren")
+        else:
+            action = self._action_label(dec.action)
+        if dec.action is not Action.DROP and (
+                track.type == "audio"
+                or (track.type == "video" and self._is_first_video(track)
+                    and self.plan.dv is not None
+                    and getattr(self.plan.dv, "has_dv", False))):
             action += "  ▾"
         if self._is_default_audio(track):
             action += "   ★"
@@ -211,11 +230,70 @@ class TrackTable(ttk.Frame):
                 menu.add_command(
                     label="Als Standard-Audiospur",
                     command=lambda: self._make_default(track))
+        elif track.type == "video" and self._is_first_video(track):
+            self._add_video_entries(menu, track, dec)
         else:
             add("Behalten (verlustfrei)", Action.COPY)
             add("Entfernen", Action.DROP)
 
         menu.tk_popup(x, y)
+
+    def _add_video_entries(self, menu: tk.Menu, track: Track, dec) -> None:
+        """Videospur-Menü inkl. DV/HDR-Remux (verlustfrei, kein Encoding)."""
+        mode = self.plan.video_mode
+        dvi = self.plan.dv
+
+        def marker(active: bool) -> str:
+            return "●  " if active else "    "
+
+        menu.add_command(
+            label=marker(dec.action is Action.COPY and mode == "copy")
+            + "Kopieren (verlustfrei)",
+            command=lambda: self._set_video_mode(track, "copy"))
+
+        # DV entfernen → HDR10
+        if dvi is None:
+            reason = "DV-Analyse fehlt (ffprobe nicht gefunden)"
+        elif not self.dovi_ok:
+            reason = dvi.hdr10_blocked_reason() or "dovi_tool fehlt (⚙)"
+        else:
+            reason = dvi.hdr10_blocked_reason()
+        label = marker(mode == "hdr10") + "DV entfernen → HDR10 (verlustfrei)"
+        if reason:
+            menu.add_command(label=f"{label}   — {reason}", state="disabled")
+        else:
+            menu.add_command(
+                label=label,
+                command=lambda: self._set_video_mode(track, "hdr10"))
+
+        # DV → 8.1 (MP4) — Modus A
+        if dvi is None:
+            reason81 = "DV-Analyse fehlt (ffprobe nicht gefunden)"
+        else:
+            reason81 = (dvi.dv81_blocked_reason()
+                        or ("dovi_tool fehlt (⚙)" if not self.dovi_ok else None)
+                        or ("MP4Box fehlt (⚙)" if not self.mp4box_ok else None))
+        label81 = marker(mode == "dv81") + "DV → Profil 8.1 (MP4)"
+        if reason81:
+            menu.add_command(label=f"{label81}   — {reason81}",
+                             state="disabled")
+        else:
+            menu.add_command(
+                label=label81,
+                command=lambda: self._set_video_mode(track, "dv81"))
+
+        menu.add_separator()
+        menu.add_command(label=marker(dec.action is Action.DROP) + "Entfernen",
+                         command=lambda: self._drop_video(track))
+
+    def _set_video_mode(self, track: Track, mode: str) -> None:
+        self.plan.video_mode = mode
+        self.plan.set_action(track.id, Action.COPY, Origin.MANUAL)
+        self._changed()
+
+    def _drop_video(self, track: Track) -> None:
+        self.plan.video_mode = "copy"   # Modus ist ohne Videospur sinnlos
+        self._set_action(track, Action.DROP)
 
     def _set_action(self, track: Track, action: Action) -> None:
         self.plan.set_action(track.id, action, Origin.MANUAL)

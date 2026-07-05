@@ -25,9 +25,14 @@ from . import theme
 
 _TOOL_TITLES = {
     "mkvtoolnix": ("MKVToolNix", "Analyse & verlustfreies Muxen — Pflicht"),
-    "ffmpeg": ("FFmpeg", "Stereo-Downmix — nur für Konvertierung nötig"),
+    "ffmpeg": ("FFmpeg", "Audio-Konvertierung & DV-Analyse (ffprobe)"),
+    "dovi_tool": ("dovi_tool",
+                  "Dolby-Vision-Remux (DV entfernen/8.1) — optional"),
+    "mp4box": ("MP4Box (GPAC)",
+               "DV 8.1 → MP4 — manuell installieren (gpac.io), Pfad wählen"),
 }
-_TOOL_EXES = {"mkvtoolnix": "mkvmerge", "ffmpeg": "ffmpeg"}
+_TOOL_EXES = {"mkvtoolnix": "mkvmerge", "ffmpeg": "ffmpeg",
+              "dovi_tool": "dovi_tool", "mp4box": "mp4box"}
 
 
 class ToolManagerDialog(ttk.Toplevel):
@@ -53,7 +58,8 @@ class ToolManagerDialog(ttk.Toplevel):
         body.columnconfigure(0, weight=1)
 
         self.rows: dict[str, dict] = {}
-        for i, kind in enumerate(("mkvtoolnix", "ffmpeg")):
+        for i, kind in enumerate(("mkvtoolnix", "ffmpeg", "dovi_tool",
+                                  "mp4box")):
             self._build_row(body, i, kind)
         self._refresh_status(tool_status)
 
@@ -108,9 +114,11 @@ class ToolManagerDialog(ttk.Toplevel):
         buttons.grid(row=2, column=2, padx=(6, 0))
         ttk.Button(buttons, text="…", width=3, bootstyle="secondary-outline",
                    command=lambda k=kind: self._browse(k)).pack(side="left")
-        ttk.Button(buttons, text="⬇", width=3, bootstyle="primary-outline",
-                   command=lambda k=kind: self._download(only=k)
-                   ).pack(side="left", padx=(4, 0))
+        if kind in downloader.DOWNLOADERS:
+            ttk.Button(buttons, text="⬇", width=3,
+                       bootstyle="primary-outline",
+                       command=lambda k=kind: self._download(only=k)
+                       ).pack(side="left", padx=(4, 0))
 
         self.rows[kind] = {"status": status, "path": path_var}
 
@@ -131,8 +139,9 @@ class ToolManagerDialog(ttk.Toplevel):
 
     def _missing(self) -> list[str]:
         return [k for k in self.rows
-                if not (self._status.get(_TOOL_EXES[k])
-                        and self._status[_TOOL_EXES[k]].ok)]
+                if k in downloader.DOWNLOADERS   # mp4box: nur manueller Pfad
+                and not (self._status.get(_TOOL_EXES[k])
+                         and self._status[_TOOL_EXES[k]].ok)]
 
     # ── Aktionen ──────────────────────────────────────────────────────────
 

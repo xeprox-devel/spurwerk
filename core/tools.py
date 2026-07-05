@@ -11,9 +11,20 @@ from pathlib import Path
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 REQUIRED = ("mkvmerge", "ffmpeg")   # ffmpeg nur für Stereo-Aktionen nötig
+# optional: ffprobe (DV-Analyse), dovi_tool (DV-Remux), mp4box (DV-8.1-MP4)
+OPTIONAL = ("ffprobe", "dovi_tool", "mp4box")
+ALL_TOOLS = REQUIRED + OPTIONAL
+
 _VERSION_RE = {
     "mkvmerge": re.compile(r"mkvmerge v([\d.]+)"),
     "ffmpeg": re.compile(r"ffmpeg version (\S+)"),
+    "ffprobe": re.compile(r"ffprobe version (\S+)"),
+    "dovi_tool": re.compile(r"dovi_tool ([\d.]+)"),
+    "mp4box": re.compile(r"GPAC version ([\w.\-]+)", re.IGNORECASE),
+}
+_VERSION_FLAG = {
+    "mkvmerge": "--version", "ffmpeg": "-version", "ffprobe": "-version",
+    "dovi_tool": "--version", "mp4box": "-version",
 }
 
 
@@ -31,7 +42,7 @@ class ToolStatus:
 def detect_tools(base_path: Path, configured: dict[str, str]) -> dict[str, str]:
     """Konfigurierte Pfade haben Vorrang, sonst tools/-Ordner."""
     result: dict[str, str] = {}
-    for name in REQUIRED:
+    for name in ALL_TOOLS:
         configured_path = configured.get(name, "")
         if configured_path and Path(configured_path).exists():
             result[name] = configured_path
@@ -46,7 +57,7 @@ def probe(name: str, path: str) -> ToolStatus:
     status = ToolStatus(name=name, path=path)
     if not path or not Path(path).exists():
         return status
-    flag = "--version" if name == "mkvmerge" else "-version"
+    flag = _VERSION_FLAG.get(name, "--version")
     try:
         result = subprocess.run(
             [path, flag], capture_output=True, text=True, encoding="utf-8",
@@ -61,4 +72,4 @@ def probe(name: str, path: str) -> ToolStatus:
 
 
 def probe_all(paths: dict[str, str]) -> dict[str, ToolStatus]:
-    return {name: probe(name, paths.get(name, "")) for name in REQUIRED}
+    return {name: probe(name, paths.get(name, "")) for name in ALL_TOOLS}

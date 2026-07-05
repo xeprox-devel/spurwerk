@@ -164,6 +164,9 @@ class FilePlan:
     # Job-Queue-Prinzip: JEDE Datei trägt ihre eigene Konvertierungs-Config
     stereo: StereoSettings = field(default_factory=StereoSettings)
     profile_name: str = ""
+    # DV/HDR-Kompatibilitäts-Remux (verlustfrei): copy | hdr10 | dv81
+    video_mode: str = "copy"
+    dv: "object | None" = None      # core.dv.DVInfo, nach der Analyse gesetzt
 
     # ── Abfragen ──────────────────────────────────────────────────────────
 

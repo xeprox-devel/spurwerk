@@ -23,6 +23,7 @@ except ImportError:  # ältere 1.x
     from ttkbootstrap.toast import ToastNotification
 
 import config as appconfig
+from core import dv as dv_analysis
 from core import tools as toolchain
 from core.langs import display_name
 from core.model import FilePlan, FileStatus, RuleProfile
@@ -396,7 +397,14 @@ class MainWindow(ttk.Frame):
             self.warn_label.configure(text="")
             return
         counts = plan.output_track_count
-        parts = [f"{counts['video']}× Video"]
+        video_part = f"{counts['video']}× Video"
+        if plan.video_mode == dv_analysis.VIDEO_MODE_HDR10:
+            video_part += " (DV entfernt → HDR10, verlustfrei)"
+        elif plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
+            video_part += " (DV → Profil 8.1)"
+        elif plan.dv is not None and plan.dv.describe():
+            video_part += f" ({plan.dv.describe()})"
+        parts = [video_part]
         stereo = plan.stereo_sources()
         audio_part = f"{counts['audio']}× Audio"
         if stereo:
@@ -486,9 +494,17 @@ class MainWindow(ttk.Frame):
             mkvmerge = self.tools.get("mkvmerge", "")
             try:
                 media = scan_file(mkvmerge or "mkvmerge", path)
-                self.ui_q.put(("SCANNED", path, media))
             except ScanError as exc:
                 self.ui_q.put(("SCAN_FAILED", path, str(exc)))
+                return
+            dv_info = None
+            ffprobe = self.tools.get("ffprobe", "")
+            if ffprobe and media.by_type("video"):
+                try:
+                    dv_info = dv_analysis.analyze(ffprobe, path)
+                except dv_analysis.DVError:
+                    dv_info = None   # DV-Analyse ist optional, nie blockierend
+            self.ui_q.put(("SCANNED", path, media, dv_info))
 
     def _add_files_dialog(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -674,9 +690,23 @@ class MainWindow(ttk.Frame):
             reset_manual(plan, self.profile)
             self._refresh_all()
 
+    def _refresh_output_name(self, plan: FilePlan) -> None:
+        """Dateiname folgt dem Video-Modus: „ [HDR10].mkv“ / „ [DV8.1].mp4“."""
+        if plan.output_manual:
+            return
+        base = Path(self.profile.output.output_path_for(plan.media.path))
+        if plan.video_mode == dv_analysis.VIDEO_MODE_HDR10:
+            name = f"{base.stem} [HDR10].mkv"
+        elif plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
+            name = f"{base.stem} [DV8.1].mp4"
+        else:
+            name = base.name
+        plan.output_path = str(base.with_name(name))
+
     def _on_plan_edited(self) -> None:
         plan = self._selected_plan()
         if plan is not None:
+            self._refresh_output_name(plan)
             self._update_file_row(self.selected, plan)
         self._update_preview()
         self._update_stereo_panel_visibility()
@@ -905,6 +935,12 @@ class MainWindow(ttk.Frame):
             # neue Dateien erben die gerade sichtbare Konfiguration
             plan.stereo = replace(self.stereo)
             plan.profile_name = self.profile.name
+            plan.dv = msg[3] if len(msg) > 3 else None
+            if plan.dv is not None and plan.dv.dv_profile == 7:
+                plan.warnings.append(
+                    "Dolby Vision Profil 7 erkannt — viele Geräte zeigen "
+                    "das aus MKV falsch an. Rechtsklick auf die Videospur "
+                    "→ „DV entfernen (HDR10)“.")
             self.plans[path] = plan
             self._update_file_row(path, plan)
             for warning in plan.warnings:
@@ -982,17 +1018,29 @@ class MainWindow(ttk.Frame):
 
     def _update_tool_chips(self) -> None:
         for name, status in self.tool_status.items():
-            chip = self.tool_chips[name]
+            chip = self.tool_chips.get(name)
+            if chip is None:
+                continue   # optionale Tools (dovi_tool, …) haben keinen Chip
             if status.ok:
                 chip.configure(image=self._dot_ok,
                                text=f" {name} {status.version}")
             else:
                 chip.configure(image=self._dot_bad, text=f" {name} fehlt")
+        self.track_table.dovi_ok = bool(
+            self.tool_status.get("dovi_tool")
+            and self.tool_status["dovi_tool"].ok)
+        self.track_table.mp4box_ok = bool(
+            self.tool_status.get("mp4box")
+            and self.tool_status["mp4box"].ok)
         self._update_onboarding()
 
     def _update_onboarding(self) -> None:
+        # Nur PFLICHT-Tools entscheiden übers Onboarding — optionale
+        # (dovi_tool, mp4box) fehlen zu dürfen ist Normalzustand
         missing = (not self.tool_status
-                   or any(not s.ok for s in self.tool_status.values()))
+                   or any(not self.tool_status[n].ok
+                          for n in toolchain.REQUIRED
+                          if n in self.tool_status))
         if missing and not self.plans:
             self.onboarding.grid(row=0, column=0, sticky="ew", pady=(4, 10))
         else:

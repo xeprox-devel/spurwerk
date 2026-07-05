@@ -24,6 +24,7 @@ import tempfile
 import threading
 from pathlib import Path
 
+from . import dv
 from .commands import build_ffmpeg_downmix, build_mkvmerge_mux, stereo_temp_name
 from .model import FilePlan, FileStatus
 
@@ -119,12 +120,18 @@ class JobRunner:
         try:
             self._validate(plan)
             stereo_tracks = plan.stereo_sources()
-            steps = len(stereo_tracks) + 1
+            dv_steps = 2 if plan.video_mode == dv.VIDEO_MODE_HDR10 else 0
+            steps = dv_steps + len(stereo_tracks) + 1
             stereo_files: dict[int, str] = {}
+            video_file: str | None = None
+
+            if plan.video_mode == dv.VIDEO_MODE_HDR10:
+                temp_dir = tempfile.mkdtemp(prefix="spurwerk-")
+                video_file = self._dv_strip(plan, temp_dir, steps)
 
             if stereo_tracks:
-                temp_dir = tempfile.mkdtemp(prefix="spurwerk-")
-                for i, track in enumerate(stereo_tracks):
+                temp_dir = temp_dir or tempfile.mkdtemp(prefix="spurwerk-")
+                for i, track in enumerate(stereo_tracks, start=dv_steps):
                     self._check_cancel()
                     out = str(Path(temp_dir) / stereo_temp_name(track, settings))
                     self.q.put(("LOG",
@@ -144,7 +151,8 @@ class JobRunner:
                                f"{Path(plan.output_path).name} …", "step"))
             Path(plan.output_path).parent.mkdir(parents=True, exist_ok=True)
             mux_cmd = build_mkvmerge_mux(
-                self.tools["mkvmerge"], plan, settings, stereo_files)
+                self.tools["mkvmerge"], plan, settings, stereo_files,
+                video_file=video_file)
             self._run_mkvmerge(mux_cmd,
                                slice_start=(steps - 1) * 100 // steps,
                                slice_end=100)
@@ -176,9 +184,56 @@ class JobRunner:
             if temp_dir:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def _dv_strip(self, plan: FilePlan, temp_dir: str, steps: int) -> str:
+        """DV/HDR-Remux Modus „hdr10": HEVC extrahieren, RPU+EL entfernen.
+
+        Verlustfrei — der HDR10-Base-Layer wird bitgenau weitergereicht;
+        statische HDR10-Metadaten stecken im Stream selbst (SEI/VUI)."""
+        if not self.tools.get("dovi_tool"):
+            raise JobError("dovi_tool fehlt — bitte über ⚙ Werkzeuge "
+                           "herunterladen oder Pfad wählen.")
+        raw = str(Path(temp_dir) / "video_dv.hevc")
+        clean = str(Path(temp_dir) / "video_hdr10.hevc")
+
+        self.q.put(("LOG", f"  [1/{steps}] Extrahiere HEVC-Stream "
+                           f"(bitgenau, kein Encoding) …", "step"))
+        self._run_ffmpeg(
+            dv.build_extract_hevc(self.tools["ffmpeg"],
+                                  plan.media.path, raw),
+            plan.media.duration_s, slice_start=0, slice_end=100 // steps)
+
+        self._check_cancel()
+        self.q.put(("LOG", f"  [2/{steps}] Entferne Dolby-Vision-Metadaten "
+                           f"(RPU + EL) → reines HDR10 …", "step"))
+        returncode, stderr = self._stream_process(
+            dv.build_dovi_remove(self.tools["dovi_tool"], raw, clean),
+            progress_cb=lambda _line: None)
+        if self.cancel.is_set():
+            raise _Cancelled()
+        if returncode != 0:
+            raise JobError(f"dovi_tool-Fehler (Exit {returncode}): "
+                           f"{stderr[-500:].strip()}")
+        if not Path(clean).exists() or Path(clean).stat().st_size == 0:
+            raise JobError("dovi_tool hat keine Ausgabedatei erzeugt.")
+        Path(raw).unlink(missing_ok=True)   # Peak-Speicher senken
+        self.q.put(("PROGRESS_FILE", 2 * 100 // steps))
+        return clean
+
     def _validate(self, plan: FilePlan) -> None:
         if not plan.has_output():
             raise JobError("Keine Spur für die Ausgabe ausgewählt.")
+        if plan.video_mode == dv.VIDEO_MODE_HDR10:
+            if not plan.kept_ids("video"):
+                raise JobError("DV-Entfernen gewählt, aber keine Videospur "
+                               "in der Ausgabe.")
+            info = plan.dv
+            reason = info.hdr10_blocked_reason() if info else None
+            if reason:
+                raise JobError(f"DV-Entfernen nicht möglich: {reason}")
+        elif plan.video_mode == dv.VIDEO_MODE_DV81:
+            raise JobError(
+                "DV → Profil 8.1 (MP4) benötigt MP4Box (GPAC) — bitte von "
+                "gpac.io installieren und den Pfad über ⚙ Werkzeuge wählen.")
         src = Path(plan.media.path)
         dst = Path(plan.output_path)
         if not src.exists():

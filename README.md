@@ -22,9 +22,18 @@ Kein verbreitetes Tool kann alle vier Dinge gleichzeitig:
 4. **Ein-Klick-Einrichtung**: fehlende Tools (MKVToolNix, FFmpeg) lädt die
    App selbst — mit SHA-256-Prüfung, passend zur Windows-Architektur
 
-Dazu: Batch als Normalfall (eine Datei = Batch mit einem Eintrag),
-A/V-Sync-erhaltend (Startversatz wird übernommen), deterministische
-Default-Spur-Flags, deutsche Oberfläche im dunklen „Nachtviolett"-Theme.
+Dazu: Batch als Normalfall (eine Datei = Batch mit einem Eintrag, jede
+Datei mit eigener Job-Konfiguration), A/V-Sync-erhaltend, deterministische
+Default-Spur-Flags, deutsche Oberfläche im dunklen „Nachtcyan"-Theme.
+
+**Dolby-Vision-Kompatibilitäts-Remux (verlustfrei):** 4K-MKVs mit
+DV Profil 7 (UHD-Blu-ray) zeigen auf vielen Geräten Grün-/Lilastich.
+Spurwerk erkennt das Profil automatisch (Diagnose in der Vorschauzeile)
+und entfernt auf Wunsch die DV-Metadaten (RPU+EL) per dovi_tool —
+übrig bleibt der bitidentische HDR10-Base-Layer, Atmos/TrueHD und
+Untertitel bleiben 1:1 erhalten. Profil 5 (kein HDR10-Fallback) wird
+mit Begründung gesperrt statt kaputte Farben zu erzeugen. Das Video
+wird dabei **nie** neu encodiert.
 
 ## Start
 

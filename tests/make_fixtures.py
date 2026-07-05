@@ -155,6 +155,48 @@ def make_fixtures() -> None:
         "--default-track-flag", "0:yes", ASSETS / "a51.dts",
     ])
 
+    make_dv_fixture()
+
+
+def make_dv_fixture() -> None:
+    """film_dv.mkv: HEVC-10bit mit HDR10-Signalisierung + injizierter
+    DV-Profil-8.1-RPU (synthetisch via dovi_tool generate/inject-rpu).
+    Wird übersprungen, wenn dovi_tool fehlt."""
+    dovi = TOOLS / "dovi_tool.exe"
+    if not dovi.exists():
+        print("  (film_dv.mkv übersprungen — dovi_tool fehlt in tools/)")
+        return
+
+    x265 = ("log-level=error:colorprim=bt2020:transfer=smpte2084:"
+            "colormatrix=bt2020nc:"
+            "master-display=G(13250,34500)B(7500,3000)R(34000,16000)"
+            "WP(15635,16450)L(10000000,1):max-cll=1000,400")
+    hevc = ASSETS / "hdr10.hevc"
+    run([FFMPEG, "-y", "-v", "error",
+         "-f", "lavfi", "-i", f"testsrc2=size=320x180:rate=24:duration={DURATION}",
+         "-c:v", "libx265", "-preset", "ultrafast",
+         "-pix_fmt", "yuv420p10le", "-x265-params", x265,
+         "-f", "hevc", hevc])
+
+    rpu_cfg = ASSETS / "rpu.json"
+    rpu_cfg.write_text(json.dumps({
+        "cm_version": "V29", "profile": "8.1", "length": 96,
+        "level6": {"max_display_mastering_luminance": 1000,
+                   "min_display_mastering_luminance": 1,
+                   "max_content_light_level": 1000,
+                   "max_frame_average_light_level": 400},
+    }), encoding="utf-8")
+    rpu = ASSETS / "rpu.bin"
+    run([dovi, "generate", "-j", rpu_cfg, "-o", rpu])
+    dv_hevc = ASSETS / "dv81.hevc"
+    run([dovi, "inject-rpu", "-i", hevc, "--rpu-in", rpu, "-o", dv_hevc])
+
+    mux("film_dv.mkv", [
+        dv_hevc,
+        "--language", "0:de", "--default-track-flag", "0:yes",
+        ASSETS / "a51.ac3",
+    ])
+
 
 def summary() -> None:
     for mkv in sorted(OUT.glob("*.mkv")):

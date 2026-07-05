@@ -42,9 +42,12 @@ BTBN_BASE = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download"
 WIN32_BASE = ("https://github.com/sudo-nautilus/FFmpeg-Builds-Win32"
               "/releases/latest/download")
 
+DOVI_API = "https://api.github.com/repos/quietvoid/dovi_tool/releases/latest"
+
 DOWNLOAD_PAGES = {
     "mkvtoolnix": "https://mkvtoolnix.download/downloads.html",
     "ffmpeg": "https://www.gyan.dev/ffmpeg/builds/",
+    "dovi_tool": "https://github.com/quietvoid/dovi_tool/releases",
 }
 
 
@@ -263,8 +266,48 @@ def _ffmpeg_from(url: str, sums_url: str, version: str, tools_dir: Path,
             raise DownloadError("SHA-256-Prüfung fehlgeschlagen — "
                                 "Download beschädigt?")
         files = _extract_members(
-            archive, {"bin/ffmpeg.exe": "ffmpeg.exe"}, tools_dir, progress)
+            archive,
+            {"bin/ffmpeg.exe": "ffmpeg.exe",
+             "bin/ffprobe.exe": "ffprobe.exe"},   # ffprobe: DV-/HDR-Analyse
+            tools_dir, progress)
         return DownloadResult("ffmpeg", version, files)
+    finally:
+        archive.unlink(missing_ok=True)
+
+
+# ── dovi_tool (DV/HDR-Kompatibilitäts-Remux) ─────────────────────────────
+
+
+def download_dovi_tool(tools_dir: Path, progress: ProgressCb,
+                       cancel: threading.Event) -> DownloadResult:
+    """dovi_tool von GitHub — die Versionsnummer steckt im Asset-Namen,
+    darum führt der Weg über die GitHub-API (releases/latest)."""
+    if not os_is_64bit():
+        raise DownloadError("dovi_tool gibt es nur für 64-bit-Windows.")
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    progress("Ermittle aktuelle dovi_tool-Version …", None)
+    try:
+        import json
+        release = json.loads(_get_bytes(DOVI_API))
+        version = str(release.get("tag_name", "?"))
+        # Achtung: im selben Release liegt auch libdovi-*-windows-msvc.zip —
+        # deshalb strikt aufs dovi_tool-Präfix matchen
+        asset = next(
+            a for a in release.get("assets", [])
+            if a["name"].startswith("dovi_tool-")
+            and "x86_64-pc-windows" in a["name"]
+            and a["name"].endswith(".zip"))
+    except (OSError, StopIteration, ValueError, KeyError) as exc:
+        raise DownloadError(
+            f"GitHub-Release nicht auflösbar: {exc}") from exc
+
+    archive = tools_dir / asset["name"]
+    try:
+        _download(asset["browser_download_url"], archive, progress,
+                  f"dovi_tool {version}", cancel)
+        files = _extract_members(
+            archive, {"dovi_tool.exe": "dovi_tool.exe"}, tools_dir, progress)
+        return DownloadResult("dovi_tool", version, files)
     finally:
         archive.unlink(missing_ok=True)
 
@@ -272,4 +315,5 @@ def _ffmpeg_from(url: str, sums_url: str, version: str, tools_dir: Path,
 DOWNLOADERS = {
     "mkvtoolnix": download_mkvtoolnix,
     "ffmpeg": download_ffmpeg,
+    "dovi_tool": download_dovi_tool,
 }
