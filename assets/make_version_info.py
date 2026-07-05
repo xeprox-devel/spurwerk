@@ -25,13 +25,13 @@ VSVersionInfo(
     date=(0, 0)),
   kids=[
     StringFileInfo([StringTable('040704b0', [
-        StringStruct('CompanyName', 'xeproX'),
+        StringStruct('CompanyName', 'xeproX-deveL'),
         StringStruct('FileDescription',
                      '{APP_NAME} — MKV Remuxer & Audio-Studio'),
         StringStruct('FileVersion', '{__version__}'),
         StringStruct('ProductName', '{APP_NAME}'),
         StringStruct('ProductVersion', '{__version__}'),
-        StringStruct('LegalCopyright', '© xeproX'),
+        StringStruct('LegalCopyright', '© xeproX-deveL'),
         StringStruct('OriginalFilename', '{APP_NAME}.exe')])]),
     VarFileInfo([VarStruct('Translation', [1031, 1200])])
   ])

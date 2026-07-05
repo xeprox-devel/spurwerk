@@ -124,4 +124,4 @@ TMDb unterstützt oder zertifiziert.
 Version: siehe Titelleiste · Änderungen: [CHANGELOG.md](CHANGELOG.md) ·
 Für Entwickler: [DEVELOPMENT.md](DEVELOPMENT.md)
 
-© xeproX · gebaut mit Python & ttkbootstrap
+© xeproX-deveL · gebaut mit Python & ttkbootstrap
