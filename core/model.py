@@ -90,6 +90,13 @@ class MediaInfo:
                 return i
         raise KeyError(f"Track {track_id} ist keine Audiospur")
 
+    def ffmpeg_sub_index(self, track_id: int) -> int:
+        """Index der Spur unter den Untertiteln (für ffmpeg `-map 0:s:N`)."""
+        for i, t in enumerate(self.by_type("subtitles")):
+            if t.id == track_id:
+                return i
+        raise KeyError(f"Track {track_id} ist keine Untertitelspur")
+
 
 @dataclass
 class TrackDecision:

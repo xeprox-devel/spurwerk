@@ -1033,9 +1033,6 @@ class MainWindow(ttk.Frame):
         self.track_table.dovi_ok = bool(
             self.tool_status.get("dovi_tool")
             and self.tool_status["dovi_tool"].ok)
-        self.track_table.mp4box_ok = bool(
-            self.tool_status.get("mp4box")
-            and self.tool_status["mp4box"].ok)
         self._update_onboarding()
 
     def _update_onboarding(self) -> None:

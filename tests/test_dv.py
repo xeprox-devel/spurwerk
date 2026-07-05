@@ -81,6 +81,43 @@ class TestMuxMitVideoErsatz:
         assert order == "0:0,1:1,2:0,1:4"   # Stereo-Datei rückt auf fid 2
 
 
+class TestMp4Kommando:
+    def test_dv_mp4_video_und_audio(self):
+        plan = build_plan(film_std(), profile_de(stereo_policy="never"))
+        cmd, warns = dv.build_ffmpeg_dv_mp4(
+            "ffmpeg", "C:/tmp/dv81.hevc", plan, {}, "out.mp4")
+        # Video mit DV-RPU-Filter, dvh1-Tag
+        assert "dovi_rpu" in cmd and "-strict" in cmd
+        assert cmd[cmd.index("-tag:v") + 1] == "dvh1"
+        # AC3 (5.1 de) ist MP4-tauglich → copy, keine Warnung
+        assert "-map" in cmd and "1:a:0" in cmd
+        assert warns == []
+        assert cmd[-1] == "out.mp4"
+        assert cmd[cmd.index("-map_chapters") + 1] == "1"
+
+    def test_incompatible_audio_wird_transkodiert(self):
+        from tests.helpers import media, track
+        m = media(track(0, "video", codec="V_MPEGH/ISO/HEVC"),
+                  track(1, "audio", "de", codec="A_TRUEHD", channels=8))
+        plan = build_plan(m, profile_de(stereo_policy="never"))
+        cmd, warns = dv.build_ffmpeg_dv_mp4(
+            "ffmpeg", "C:/tmp/v.hevc", plan, {}, "out.mp4")
+        assert "eac3" in cmd                        # TrueHD → E-AC3
+        assert any("nicht MP4-tauglich" in w for w in warns)
+
+    def test_bild_untertitel_werden_weggelassen(self):
+        from tests.helpers import media, track
+        m = media(track(0, "video", codec="V_MPEGH/ISO/HEVC"),
+                  track(1, "audio", "de", codec="A_AC3", channels=6),
+                  track(2, "subtitles", "de", codec="S_HDMV/PGS"))
+        plan = build_plan(m, profile_de(sub_policy="all",
+                                        stereo_policy="never"))
+        cmd, warns = dv.build_ffmpeg_dv_mp4(
+            "ffmpeg", "C:/tmp/v.hevc", plan, {}, "out.mp4")
+        assert "mov_text" not in cmd                # PGS nicht muxbar
+        assert any("nicht MP4-tauglich" in w for w in warns)
+
+
 needs_dv_stack = pytest.mark.skipif(
     not (DV_FIXTURE.exists() and Path(TOOLS["dovi_tool"]).exists()
          and Path(TOOLS["ffprobe"]).exists()),
@@ -128,3 +165,29 @@ class TestEndToEnd:
         assert runner.run([plan]) == 0
         assert "Profil 5" in plan.error
         assert not Path(plan.output_path).exists()
+
+    def test_dv81_mp4_mit_ffmpeg(self, tmp_path):
+        """Modus A ohne MP4Box: DV-8.1-MP4 mit gültiger dvvC-Box, Audio drin,
+        Video bitgenau (nur Metadaten/Container geändert)."""
+        media = scan_file(TOOLS["mkvmerge"], str(DV_FIXTURE))
+        plan = build_plan(media, profile_de(stereo_policy="never"))
+        plan.dv = dv.analyze(TOOLS["ffprobe"], str(DV_FIXTURE))
+        plan.video_mode = dv.VIDEO_MODE_DV81
+        plan.output_path = str(tmp_path / "out [DV8.1].mp4")
+
+        runner = JobRunner(TOOLS, queue.Queue())
+        assert runner.run([plan]) == 1, plan.error
+
+        out = dv.analyze(TOOLS["ffprobe"], plan.output_path)
+        assert out.is_hevc
+        assert out.dv_profile == 8          # dvvC-Box vorhanden, Profil 8
+        assert not out.el_present
+        # Audio ist im MP4 gelandet
+        import json
+        import subprocess
+        data = json.loads(subprocess.run(
+            [TOOLS["ffprobe"], "-v", "quiet", "-print_format", "json",
+             "-show_streams", plan.output_path],
+            capture_output=True, text=True).stdout)
+        kinds = [s["codec_type"] for s in data["streams"]]
+        assert "video" in kinds and "audio" in kinds

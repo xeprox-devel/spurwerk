@@ -11,8 +11,8 @@ from pathlib import Path
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 REQUIRED = ("mkvmerge", "ffmpeg")   # ffmpeg nur für Stereo-Aktionen nötig
-# optional: ffprobe (DV-Analyse), dovi_tool (DV-Remux), mp4box (DV-8.1-MP4)
-OPTIONAL = ("ffprobe", "dovi_tool", "mp4box")
+# optional: ffprobe (DV-Analyse), dovi_tool (DV-Remux inkl. DV→8.1-MP4)
+OPTIONAL = ("ffprobe", "dovi_tool")
 ALL_TOOLS = REQUIRED + OPTIONAL
 
 _VERSION_RE = {
@@ -20,11 +20,10 @@ _VERSION_RE = {
     "ffmpeg": re.compile(r"ffmpeg version (\S+)"),
     "ffprobe": re.compile(r"ffprobe version (\S+)"),
     "dovi_tool": re.compile(r"dovi_tool ([\d.]+)"),
-    "mp4box": re.compile(r"GPAC version ([\w.\-]+)", re.IGNORECASE),
 }
 _VERSION_FLAG = {
     "mkvmerge": "--version", "ffmpeg": "-version", "ffprobe": "-version",
-    "dovi_tool": "--version", "mp4box": "-version",
+    "dovi_tool": "--version",
 }
 
 

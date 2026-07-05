@@ -40,7 +40,6 @@ class TrackTable(ttk.Frame):
         self.locked = False   # während eines Laufs sind Pläne eingefroren
         self.convert_label = "Stereo AC3"   # z. B. "E-AC3 5.1", vom Panel gesetzt
         self.dovi_ok = False    # dovi_tool verfügbar (vom Hauptfenster gesetzt)
-        self.mp4box_ok = False
         self._images = theme.make_check_images(self)   # Referenzen halten!
 
         self.columnconfigure(0, weight=1)
@@ -266,13 +265,12 @@ class TrackTable(ttk.Frame):
                 label=label,
                 command=lambda: self._set_video_mode(track, "hdr10"))
 
-        # DV → 8.1 (MP4) — Modus A
+        # DV → 8.1 (MP4) — Modus A (nur ffmpeg+dovi_tool, kein MP4Box nötig)
         if dvi is None:
             reason81 = "DV-Analyse fehlt — FFmpeg über ⚙ neu laden"
         else:
             reason81 = (dvi.dv81_blocked_reason()
-                        or ("dovi_tool fehlt (⚙)" if not self.dovi_ok else None)
-                        or ("MP4Box fehlt (⚙)" if not self.mp4box_ok else None))
+                        or ("dovi_tool fehlt (⚙)" if not self.dovi_ok else None))
         label81 = marker(mode == "dv81") + "DV → Profil 8.1 (MP4)"
         if reason81:
             menu.add_command(label=f"{label81}   — {reason81}",

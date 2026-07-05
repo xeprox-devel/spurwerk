@@ -27,12 +27,10 @@ _TOOL_TITLES = {
     "mkvtoolnix": ("MKVToolNix", "Analyse & verlustfreies Muxen — Pflicht"),
     "ffmpeg": ("FFmpeg", "Audio-Konvertierung & DV-Analyse (ffprobe)"),
     "dovi_tool": ("dovi_tool",
-                  "Dolby-Vision-Remux (DV entfernen/8.1) — optional"),
-    "mp4box": ("MP4Box (GPAC)",
-               "DV 8.1 → MP4 — manuell installieren (gpac.io), Pfad wählen"),
+                  "Dolby-Vision-Remux (DV entfernen & DV→8.1-MP4) — optional"),
 }
 _TOOL_EXES = {"mkvtoolnix": "mkvmerge", "ffmpeg": "ffmpeg",
-              "dovi_tool": "dovi_tool", "mp4box": "mp4box"}
+              "dovi_tool": "dovi_tool"}
 
 
 class ToolManagerDialog(ttk.Toplevel):
@@ -58,8 +56,7 @@ class ToolManagerDialog(ttk.Toplevel):
         body.columnconfigure(0, weight=1)
 
         self.rows: dict[str, dict] = {}
-        for i, kind in enumerate(("mkvtoolnix", "ffmpeg", "dovi_tool",
-                                  "mp4box")):
+        for i, kind in enumerate(("mkvtoolnix", "ffmpeg", "dovi_tool")):
             self._build_row(body, i, kind)
         self._refresh_status(tool_status)
 

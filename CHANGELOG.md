@@ -6,6 +6,20 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Dolby Vision → Profil 8.1 (MP4)** ist jetzt voll nutzbar — **ohne
+  MP4Box**. FFmpeg (8.1+) schreibt die DV-Signalisierung selbst; die
+  Pipeline (Video bitgenau + dovi_tool-Konvertierung bei Profil 7 +
+  MP4-Mux) läuft mit den Werkzeugen, die Spurwerk ohnehin lädt. MP4-
+  taugliches Audio (AAC/AC3/E-AC3, inkl. Atmos in E-AC3) wird 1:1
+  kopiert, TrueHD/DTS nach E-AC3 gewandelt, Text-Untertitel zu mov_text;
+  Bild-Untertitel (PGS) und nicht MP4-taugliche Spuren werden mit Hinweis
+  weggelassen (dafür ist der MKV-Modus da). Quellen, die bereits Profil 8
+  sind, werden nur umverpackt (keine RPU-Konvertierung).
+- Der Video-Codec ist damit pro Datei frei wählbar: **unangetastet
+  übernehmen** (Kopieren, behält DV/HDR10+ komplett), **DV → HDR10**
+  (MKV, verlustfrei) oder **DV → 8.1 (MP4)**.
+
 ### Behoben
 - **DV-Analyse blieb ohne Grund gesperrt, wenn `ffprobe.exe` fehlte**,
   obwohl die FFmpeg-Zeile „gefunden" zeigte (ältere Downloads hatten
