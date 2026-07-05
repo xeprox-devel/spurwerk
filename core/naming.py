@@ -52,3 +52,17 @@ def clean_filename(name: str, keep_ext: str | None = None) -> str:
         title = p.stem                       # nichts erkannt: unverändert
     clean = _ILLEGAL.sub("", title).strip()
     return f"{clean}{ext}"
+
+
+def output_filename(stem: str, source_suffix: str, to_mp4: bool) -> str:
+    """Baut den Ausgabedateinamen aus dem (bereits bereinigten oder per TMDb
+    ermittelten) Titel-Stamm plus Endung.
+
+    Der Video-Modus bestimmt AUSSCHLIESSLICH die Endung: DV → Profil 8.1
+    erzwingt .mp4, alles andere behält die Quell-Endung (.mkv). Kein
+    Klammer-Suffix mehr im Namen — früher wurde beim HDR10-/DV-Remux
+    „… [HDR10].mkv" bzw. „… [DV8.1].mp4" angehängt; das verschmutzte den
+    sauberen Titel und war unerwünscht. Der Modus zeigt sich jetzt nur noch
+    an der Endung."""
+    ext = ".mp4" if to_mp4 else source_suffix
+    return f"{stem}{ext}"

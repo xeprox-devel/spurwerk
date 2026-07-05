@@ -75,10 +75,13 @@ class MainWindow(ttk.Frame):
         self._build_workspace()
         self._restore_output_dir()
         self._sync_state()
+        self._bind_shortcuts()
 
         self.after(80, self._poll_queue)
         self.after(120, self._restore_session)
         threading.Thread(target=self._probe_tools, daemon=True).start()
+        if self.cfg.check_updates:
+            threading.Thread(target=self._check_updates, daemon=True).start()
 
     # ══ Aufbau ═══════════════════════════════════════════════════════════
 
@@ -111,14 +114,26 @@ class MainWindow(ttk.Frame):
             chip.bind("<Button-1>", lambda _e: self._open_tool_manager())
             self.tool_chips[name] = chip
 
-        ttk.Button(chips, text="ⓘ", width=3, bootstyle="secondary-outline",
-                   command=self._open_about).pack(side="left", padx=(0, 6))
+        # Update-Hinweis — bleibt leer/unsichtbar, bis eine neuere Version
+        # gefunden wird (siehe _handle_message „UPDATE").
+        self.update_chip = ttk.Label(chips, text="", cursor="hand2",
+                                     foreground=theme.COLORS["success"],
+                                     font=("Segoe UI", 9, "bold"))
+        self._info_btn = ttk.Button(chips, text="ⓘ", width=3,
+                                    bootstyle="secondary-outline",
+                                    command=self._open_about)
+        self._info_btn.pack(side="left", padx=(0, 6))
         ttk.Button(chips, text="⚙", width=3, bootstyle="secondary-outline",
                    command=self._open_tool_manager).pack(side="left")
 
     def _open_about(self) -> None:
         from .about import AboutDialog
-        AboutDialog(self)
+        AboutDialog(self, updates_enabled=self.cfg.check_updates,
+                    on_toggle_updates=self._set_check_updates)
+
+    def _set_check_updates(self, enabled: bool) -> None:
+        self.cfg.check_updates = enabled
+        self._safe_save()
 
     def _build_empty_state(self) -> None:
         from .tool_setup import OnboardingCard
@@ -547,6 +562,17 @@ class MainWindow(ttk.Frame):
                 canonical = tmdb.canonical_name(key, Path(path).name) or ""
             self.ui_q.put(("SCANNED", path, media, dv_info, canonical))
 
+    def _bind_shortcuts(self) -> None:
+        """Tastenkürzel wie bei Profi-Werkzeugen. Global auf dem Fenster:
+        F5 = Start, Strg+O = Dateien, Strg+Umschalt+O = Ordner. „Entf" nur
+        auf der Dateiliste, damit Textfelder ungestört bleiben."""
+        top = self.winfo_toplevel()
+        top.bind("<F5>", lambda _e: self._start())
+        top.bind("<Control-o>", lambda _e: self._add_files_dialog())
+        top.bind("<Control-O>", lambda _e: self._add_folder_dialog())
+        self.file_list.tree.bind("<Delete>",
+                                 lambda _e: self._remove_selected())
+
     def _add_files_dialog(self) -> None:
         paths = filedialog.askopenfilenames(
             filetypes=[("MKV-Dateien", "*.mkv"), ("Alle Dateien", "*.*")])
@@ -664,7 +690,7 @@ class MainWindow(ttk.Frame):
             plan.stereo = replace(self.profile.stereo)
             self.stereo = plan.stereo
             reapply_rules(plan, self.profile)
-            self._refresh_output_name(plan)   # DV-Endung (.mp4/[HDR10]) erhalten
+            self._refresh_output_name(plan)   # DV-Endung (.mp4/.mkv) erhalten
         else:
             self.stereo = replace(self.profile.stereo)
 
@@ -681,7 +707,7 @@ class MainWindow(ttk.Frame):
             plan.profile_name = self.profile.name
             plan.stereo = replace(self.stereo)
             reapply_rules(plan, self.profile)
-            self._refresh_output_name(plan)   # DV-Endung (.mp4/[HDR10]) erhalten
+            self._refresh_output_name(plan)   # DV-Endung (.mp4/.mkv) erhalten
         selected = self._selected_plan()
         if selected is not None:
             self.stereo = selected.stereo
@@ -731,9 +757,12 @@ class MainWindow(ttk.Frame):
             self._refresh_all()
 
     def _refresh_output_name(self, plan: FilePlan) -> None:
-        """Dateiname folgt Video-Modus und Bereinigungs-Option."""
+        """Dateiname folgt Bereinigungs-Option; der Video-Modus bestimmt nur
+        die Endung (DV → Profil 8.1 = .mp4, sonst .mkv). Kein Klammer-Suffix
+        wie „[HDR10]“ mehr — der saubere Titel bleibt sauber."""
         if plan.output_manual:
             return
+        from core.naming import clean_filename, output_filename
         base = Path(self.profile.output.output_path_for(plan.media.path))
         stem = base.stem
         if self.cfg.clean_names or plan.canonical_name:
@@ -743,14 +772,9 @@ class MainWindow(ttk.Frame):
             if plan.canonical_name:
                 stem = plan.canonical_name
             else:
-                from core.naming import clean_filename
                 stem = Path(clean_filename(Path(plan.media.path).name)).stem
-        if plan.video_mode == dv_analysis.VIDEO_MODE_HDR10:
-            name = f"{stem} [HDR10].mkv"
-        elif plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
-            name = f"{stem} [DV8.1].mp4"
-        else:
-            name = f"{stem}{base.suffix}"
+        to_mp4 = plan.video_mode == dv_analysis.VIDEO_MODE_DV81
+        name = output_filename(stem, base.suffix, to_mp4)
         plan.output_path = str(base.with_name(name))
 
     def _on_plan_edited(self) -> None:
@@ -1157,6 +1181,8 @@ class MainWindow(ttk.Frame):
             self.tool_status = msg[1]
             self._tools_ready.set()   # wartende Scans dürfen loslegen
             self._update_tool_chips()
+        elif kind == "UPDATE":
+            self._show_update(msg[1])
         elif kind == "BATCH_DONE":
             self._on_batch_done(msg[1], msg[2], msg[3])
 
@@ -1214,6 +1240,31 @@ class MainWindow(ttk.Frame):
                                             self.cfg.tools)
         self.ui_q.put(("TOOLS", toolchain.probe_all(self.tools)))
 
+    # ══ Update-Prüfung ═══════════════════════════════════════════════════
+
+    def _check_updates(self) -> None:
+        """Läuft im Hintergrund; meldet nur, wenn wirklich etwas Neueres da
+        ist. Offline/Storung → still nichts (siehe core.update)."""
+        from core import update
+        from version import __version__
+        info = update.check_latest(__version__)
+        if info is not None:
+            self.ui_q.put(("UPDATE", info))
+
+    def _show_update(self, info) -> None:
+        self.update_chip.configure(
+            text=f"  ⭑ Version {info.latest} verfügbar")
+        self.update_chip.pack(side="left", padx=(0, 10),
+                              before=self._info_btn)
+        self.update_chip.bind(
+            "<Button-1>", lambda _e: self._open_update(info.url))
+        self.log.log(f"Neue Version {info.latest} verfügbar — "
+                     f"klick auf den Hinweis oben oder {info.url}", "info")
+
+    def _open_update(self, url: str) -> None:
+        import webbrowser
+        webbrowser.open(url)
+
     def _update_tool_chips(self) -> None:
         for name, status in self.tool_status.items():
             chip = self.tool_chips.get(name)
@@ -1267,5 +1318,16 @@ class MainWindow(ttk.Frame):
             if self.runner:
                 self.runner.terminate_active()
             self._worker.join(timeout=3)
+        self._remember_geometry()
         self._safe_save()   # offene Jobs + Einstellungen für den Neustart
         return True
+
+    def _remember_geometry(self) -> None:
+        """Aktuelle Fenstergröße/-position für den nächsten Start merken —
+        nur im Normalzustand (nicht minimiert)."""
+        try:
+            top = self.winfo_toplevel()
+            if top.state() == "normal":
+                self.cfg.window_geometry = top.geometry()
+        except Exception:
+            pass  # Geometrie zu merken darf das Beenden nie blockieren

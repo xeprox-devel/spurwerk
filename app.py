@@ -58,8 +58,20 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
     # ── Fenstergröße ──────────────────────────────────────────────────────
 
     def _first_layout(self) -> None:
-        self.autosize(allow_shrink=True)
-        self.place_window_center()
+        from ui.geometry import clamp_geometry
+        self.update_idletasks()
+        saved = clamp_geometry(self.cfg.window_geometry,
+                               self.winfo_screenwidth(),
+                               self.winfo_screenheight())
+        if saved:
+            # Gemerkte Größe/Position gewinnt über die Auto-Größe.
+            self.geometry(saved)
+            self._user_resized = True
+            self._auto_size = None
+            self.minsize(900, 420)
+        else:
+            self.autosize(allow_shrink=True)
+            self.place_window_center()
         self._mapped = True
 
     def autosize(self, allow_shrink: bool = False) -> None:

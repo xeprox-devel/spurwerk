@@ -6,6 +6,30 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-05
+
+### Hinzugefügt
+- **Update-Hinweis**: Spurwerk prüft beim Start still, ob eine neuere
+  Version veröffentlicht wurde, und zeigt sie als klickbaren Hinweis oben
+  im Fenster an. Genau eine Anfrage an GitHub, ohne Tracking; abschaltbar
+  im „Über"-Dialog.
+- **Fenstergröße und -position werden gemerkt** und beim nächsten Start
+  wiederhergestellt (mit Sicherung gegen abgesteckte Monitore).
+- **Tastenkürzel**: `F5` startet, `Strg+O` fügt Dateien hinzu,
+  `Strg+Umschalt+O` einen Ordner, `Entf` entfernt die markierte Datei.
+
+### Behoben
+- **Videomodus verschmutzte den Dateinamen** nicht mehr: Beim „DV
+  entfernen → HDR10" hängte Spurwerk „ [HDR10]" an den Namen (analog
+  „ [DV8.1]" bei Profil 8.1). Der saubere Titel bleibt jetzt sauber — der
+  Modus zeigt sich nur noch an der Endung (`.mkv` bzw. `.mp4`).
+
+### Geändert
+- **Timing-Absicherung beim DV-Remux**: Dem roh extrahierten HEVC-Stream
+  wird die exakte Quell-Bildrate mitgegeben (`--default-duration`), damit
+  mkvmerge sie nie raten muss. Konservativ nur bei erkannten
+  Standard-Bildraten (Film/TV) — VFR/Exotisches bleibt unangetastet.
+
 ## [1.0.1] — 2026-07-05
 
 ### Hinzugefügt

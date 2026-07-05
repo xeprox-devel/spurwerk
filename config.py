@@ -33,6 +33,8 @@ class AppConfig:
     clean_names: bool = False                  # Dateinamen bereinigen (offline)
     online_names: bool = False                 # zusätzlich TMDb-Abgleich
     tmdb_key: str = ""                         # TMDb-API-Key (v3)
+    check_updates: bool = True                 # beim Start nach Updates sehen
+    window_geometry: str = ""                  # zuletzt genutzte Fenstergröße/-position
     session: list[dict] = field(default_factory=list)  # offene Jobs
 
     def all_profiles(self) -> list[RuleProfile]:
@@ -67,6 +69,8 @@ def save(cfg: AppConfig) -> None:
         "clean_names": cfg.clean_names,
         "online_names": cfg.online_names,
         "tmdb_key": cfg.tmdb_key,
+        "check_updates": cfg.check_updates,
+        "window_geometry": cfg.window_geometry,
         "session": cfg.session,
         "user_profiles": [_profile_to_dict(p) for p in cfg.user_profiles],
     }
@@ -108,6 +112,8 @@ def _from_dict(data: dict) -> AppConfig:
         clean_names=bool(data.get("clean_names", False)),
         online_names=bool(data.get("online_names", False)),
         tmdb_key=data.get("tmdb_key", ""),
+        check_updates=bool(data.get("check_updates", True)),
+        window_geometry=str(data.get("window_geometry", "")),
         session=list(data.get("session", [])),
         user_profiles=profiles,
     )

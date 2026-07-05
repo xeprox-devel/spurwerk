@@ -143,6 +143,16 @@ eine unbrauchbare Datei zu erzeugen.
 **Welche Systemvoraussetzungen?**
 Windows 10/11 (64-bit). Die Werkzeuge lädt Spurwerk selbst.
 
+**Telefoniert Spurwerk nach Hause?**
+Nein, kein Tracking. Beim Start prüft Spurwerk mit einer einzigen Anfrage
+an GitHub, ob eine neuere Version vorliegt (abschaltbar im „Über"-Dialog).
+Der optionale Titelabgleich sendet nur den Suchtitel an TMDb. Sonst geht
+nichts raus.
+
+**Gibt es Tastenkürzel?**
+Ja: `F5` startet, `Strg+O` fügt Dateien hinzu, `Strg+Umschalt+O` einen
+ganzen Ordner, `Entf` entfernt die markierte Datei aus der Liste.
+
 ## Die Werkzeuge dahinter
 
 Spurwerk orchestriert bewährte freie Software: **MKVToolNix**

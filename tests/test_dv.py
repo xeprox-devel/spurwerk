@@ -60,6 +60,36 @@ class TestParser:
         info = dv.parse_stream({"codec_name": "h264"})
         assert "HEVC" in info.hdr10_blocked_reason()
 
+    def test_frame_rate_wird_erfasst(self):
+        info = dv.parse_stream({"codec_name": "hevc",
+                                "r_frame_rate": "24000/1001"})
+        assert info.frame_rate == "24000/1001"
+
+    def test_ohne_frame_rate_leer(self):
+        info = dv.parse_stream({"codec_name": "hevc"})
+        assert info.frame_rate == ""
+
+
+class TestDefaultDuration:
+    """Timing-Absicherung: exakte Bildrate nur bei Standard-Raten."""
+
+    def test_standard_raten_exakt(self):
+        assert dv.default_duration_arg("24000/1001") == "24000/1001fps"
+        assert dv.default_duration_arg("25/1") == "25/1fps"
+        assert dv.default_duration_arg("30000/1001") == "30000/1001fps"
+        assert dv.default_duration_arg("60/1") == "60/1fps"
+
+    def test_exotische_rate_wird_verworfen(self):
+        # kein Erzwingen bei ungewöhnlichen Raten (lieber mkvmerge lassen)
+        assert dv.default_duration_arg("1000/1") is None
+        assert dv.default_duration_arg("15/1") is None
+
+    def test_unbrauchbar_ergibt_none(self):
+        assert dv.default_duration_arg("") is None
+        assert dv.default_duration_arg("24") is None      # kein Bruch
+        assert dv.default_duration_arg("24/0") is None    # Nenner 0
+        assert dv.default_duration_arg("abc/def") is None
+
 
 class TestMuxMitVideoErsatz:
     def test_video_file_ersetzt_quellvideo(self):
@@ -79,6 +109,21 @@ class TestMuxMitVideoErsatz:
                                  video_file="C:/tmp/clean.hevc")
         order = cmd[cmd.index("--track-order") + 1]
         assert order == "0:0,1:1,2:0,1:4"   # Stereo-Datei rückt auf fid 2
+
+    def test_default_duration_bei_bekannter_bildrate(self):
+        plan = build_plan(film_std(), profile_de(stereo_policy="never"))
+        plan.dv = dv.DVInfo(codec="hevc", frame_rate="24000/1001")
+        cmd = build_mkvmerge_mux("mkvmerge", plan, StereoSettings(), {},
+                                 video_file="C:/tmp/clean.hevc")
+        assert cmd[cmd.index("--default-duration") + 1] == "0:24000/1001fps"
+        # muss VOR der Video-Eingabedatei stehen
+        assert cmd.index("--default-duration") < cmd.index("C:/tmp/clean.hevc")
+
+    def test_keine_default_duration_ohne_dv_info(self):
+        plan = build_plan(film_std(), profile_de(stereo_policy="never"))
+        cmd = build_mkvmerge_mux("mkvmerge", plan, StereoSettings(), {},
+                                 video_file="C:/tmp/clean.hevc")
+        assert "--default-duration" not in cmd
 
 
 class TestMp4Kommando:

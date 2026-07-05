@@ -11,9 +11,11 @@ from . import theme
 
 
 class AboutDialog(ttk.Toplevel):
-    def __init__(self, master):
+    def __init__(self, master, updates_enabled: bool = True,
+                 on_toggle_updates=None):
         super().__init__(title=f"Über {APP_NAME}", master=master,
                          resizable=(False, False))
+        self._on_toggle_updates = on_toggle_updates
         body = ttk.Frame(self, padding=(28, 22))
         body.pack(fill="both", expand=True)
 
@@ -58,6 +60,19 @@ class AboutDialog(ttk.Toplevel):
                        "nicht von TMDb unterstützt oder zertifiziert.",
                   foreground=theme.MUTED, justify="left").pack(anchor="w",
                                                               pady=(12, 0))
+
+        # ── Einstellung: Update-Prüfung ───────────────────────────────────
+        if on_toggle_updates is not None:
+            ttk.Separator(body, bootstyle="secondary").pack(fill="x", pady=16)
+            self._updates_var = ttk.BooleanVar(value=bool(updates_enabled))
+            ttk.Checkbutton(
+                body, text="Beim Start nach Updates suchen",
+                variable=self._updates_var, bootstyle="round-toggle",
+                command=lambda: on_toggle_updates(self._updates_var.get())
+            ).pack(anchor="w")
+            ttk.Label(body,
+                      text="Eine einzige Anfrage an GitHub, ohne Tracking.",
+                      foreground=theme.MUTED).pack(anchor="w", pady=(2, 0))
 
         ttk.Button(body, text="Schließen", bootstyle="primary",
                    command=self.destroy).pack(anchor="e", pady=(18, 0))

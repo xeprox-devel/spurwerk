@@ -6,6 +6,7 @@ in tests/test_commands.py verifizieren jede Kommandoform.
 
 from __future__ import annotations
 
+from .dv import default_duration_arg
 from .model import FilePlan, StereoSettings, Track
 from .presets import CHANNEL_TARGETS, DOWNMIX_PRESETS, OUTPUT_CODECS
 
@@ -75,6 +76,12 @@ def build_mkvmerge_mux(mkvmerge: str, plan: FilePlan, settings: StereoSettings,
                 cmd += ["--language", f"0:{first_video.lang}"]
             if first_video.name:
                 cmd += ["--track-name", f"0:{first_video.name}"]
+        # Timing-Absicherung: dem roh extrahierten HEVC die exakte
+        # Quell-Bildrate mitgeben, damit mkvmerge sie nicht raten muss.
+        frame_rate = getattr(plan.dv, "frame_rate", "") if plan.dv else ""
+        duration = default_duration_arg(frame_rate)
+        if duration:
+            cmd += ["--default-duration", f"0:{duration}"]
         cmd += ["--default-track-flag", "0:yes", video_file]
 
     # ── Spurauswahl der Quelldatei ────────────────────────────────────────
