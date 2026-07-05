@@ -6,10 +6,13 @@
 
 $python = ".\.venv\Scripts\python.exe"
 
+& $python assets\make_version_info.py
+
 & $python -m PyInstaller --noconfirm --clean --onefile --noconsole `
     --name "Spurwerk" `
     --icon "spurwerk.ico" `
     --add-data "spurwerk.ico;." `
+    --version-file "build\file_version_info.txt" `
     --collect-all tkinterdnd2 `
     main.py
 

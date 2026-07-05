@@ -83,12 +83,16 @@ class MainWindow(ttk.Frame):
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         bar.columnconfigure(1, weight=1)
 
+        from version import __version__
         brand = ttk.Frame(bar)
         brand.grid(row=0, column=0, sticky="w")
         ttk.Label(brand, text="SPUR", font=("Segoe UI", 13, "bold")
                   ).pack(side="left")
         ttk.Label(brand, text="WERK", font=("Segoe UI", 13, "bold"),
                   foreground=theme.COLORS["primary"]).pack(side="left")
+        ttk.Label(brand, text=f"  v{__version__}", font=("Segoe UI", 9),
+                  foreground=theme.MUTED).pack(side="left", anchor="s",
+                                               pady=(0, 2))
 
         chips = ttk.Frame(bar)
         chips.grid(row=0, column=2, sticky="e")

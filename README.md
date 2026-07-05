@@ -1,92 +1,108 @@
 # Spurwerk
 
-**MKV Remuxer & Audio-Studio für Windows** — Spuren stellen. Verlustfrei.
+**Der einfache Weg, MKV-Filme aufzuräumen — ohne Qualitätsverlust.**
 
-Spurwerk kuratiert MKV-Dateien in einem Durchgang: unerwünschte Audio- und
-Untertitelspuren abwählen (verlustfreier Remux), auf Wunsch aus der
-5.1/7.1-Spur eine hochwertige Stereo-Version erzeugen — als zusätzliche
-Kopie oder als Ersatz. Eine Sprachregel-Automatik trifft die Auswahl für
-ganze Serienstaffeln, jede Datei bleibt per Spurtabelle übersteuerbar.
-
-## Warum noch ein MKV-Tool?
-
-Kein verbreitetes Tool kann alle vier Dinge gleichzeitig:
-
-1. **Verlustfreier Remux** mit Spur-Checkboxen (ein einziger mkvmerge-Lauf,
-   Video bleibt bitgenau unangetastet)
-2. **Selektive Stereo-Konvertierung pro Spur** im selben Durchlauf
-   (Loro/Pro/LFE-Boost-Downmix via FFmpeg; AC3, E-AC3 oder AAC)
-3. **Sprachregeln mit Live-Vorschau**: Profile wie „Deutsch bevorzugt"
-   füllen die Spurtabelle automatisch, Abweichler werden markiert (⚠),
-   manuelle Eingriffe sind geschützt (R/M-Herkunft)
-4. **Ein-Klick-Einrichtung**: fehlende Tools (MKVToolNix, FFmpeg) lädt die
-   App selbst — mit SHA-256-Prüfung, passend zur Windows-Architektur
-
-Dazu: Batch als Normalfall (eine Datei = Batch mit einem Eintrag, jede
-Datei mit eigener Job-Konfiguration), A/V-Sync-erhaltend, deterministische
-Default-Spur-Flags, deutsche Oberfläche im dunklen „Nachtcyan"-Theme.
-
-**Dolby-Vision-Kompatibilitäts-Remux (verlustfrei):** 4K-MKVs mit
-DV Profil 7 (UHD-Blu-ray) zeigen auf vielen Geräten Grün-/Lilastich.
-Spurwerk erkennt das Profil automatisch (Diagnose in der Vorschauzeile)
-und entfernt auf Wunsch die DV-Metadaten (RPU+EL) per dovi_tool —
-übrig bleibt der bitidentische HDR10-Base-Layer, Atmos/TrueHD und
-Untertitel bleiben 1:1 erhalten. Profil 5 (kein HDR10-Fallback) wird
-mit Begründung gesperrt statt kaputte Farben zu erzeugen. Das Video
-wird dabei **nie** neu encodiert.
-
-## Start
-
-**Aus dem Quellcode** (Python ≥ 3.10):
-
-```
-pip install -r requirements.txt
-python main.py
-```
-
-Beim ersten Start bietet Spurwerk an, MKVToolNix und FFmpeg (~195 MB,
-einmalig) in den Ordner `tools/` zu laden. Wer die Tools schon hat, wählt
-die Pfade über das ⚙-Symbol.
-
-## Bedienung in einem Satz
-
-MKV-Dateien ins Fenster ziehen → Profil prüfen (der Klartext-Satz sagt,
-was passieren wird) → ggf. einzelne Spuren in der Tabelle umstellen →
-**Start**.
-
-### Aktionen pro Audiospur
-
-| Aktion | Bedeutung |
-|---|---|
-| Kopieren | verlustfrei übernehmen |
-| Kopie + Stereo | Original behalten **und** Stereo-Version zusätzlich |
-| → Stereo ersetzen | nur die Stereo-Version übernehmen |
-| Entfernen | Spur fällt weg |
-
-Profile lassen sich unter **Bearbeiten…** anpassen und als eigene Presets
-speichern (Werksprofile sind schreibgeschützt).
-
-## Entwicklung
-
-```
-pip install -r requirements-dev.txt
-python tests/make_fixtures.py     # Test-MKVs erzeugen (braucht tools/)
-python -m pytest tests            # 38 Tests: Unit + End-to-End
-python tests/smoke_ui.py <ordner> # UI-Screenshots für den Sichtcheck
-```
-
-Architektur: `core/` (Datenmodell, Regel-Engine, Kommandobau, Runner,
-Downloader — komplett UI-frei und getestet), `ui/` (ttkbootstrap-Widgets),
-`config.py` (config.json). Details im [UMSETZUNGSPLAN.md](UMSETZUNGSPLAN.md).
-
-## Hinweise
-
-- **MKVToolNix** (mkvtoolnix.download) und **FFmpeg** (gyan.dev / BtbN)
-  sind eigenständige freie Software unter GPL. Spurwerk liefert sie nicht
-  mit, sondern lädt sie auf Wunsch von den offiziellen Quellen.
-- Unsignierte Downloads/EXEs können von Virenscannern oder SmartScreen
-  angehalten werden — die App prüft alle Downloads per SHA-256 gegen die
-  offiziellen Prüfsummen.
+Spurwerk nimmt deine MKV-Dateien und macht sie so, wie du sie brauchst:
+unnötige Sprachen raus, auf Wunsch eine kompatible Tonspur dazu, und
+4K-Filme mit Farbstich-Problemen werden repariert. Das Videobild wird
+dabei **niemals neu berechnet** — was reinkommt, kommt in Originalqualität
+wieder raus. Deine Originaldateien bleiben immer unangetastet.
 
 ---
-© xeproX · gebaut mit Python, tkinter/ttkbootstrap, MKVToolNix und FFmpeg
+
+## Was kann Spurwerk?
+
+**🧹 Ausmisten (verlustfrei):**
+Ein Film hat 6 Sprachen und 12 Untertitel, du brauchst nur Deutsch?
+Häkchen setzen, Start — fertig in Sekunden. Das nennt man „Remuxen":
+Es wird nur neu verpackt, nichts umgerechnet.
+
+**🔊 Kompatible Tonspur erzeugen:**
+Dein Fernseher, deine Soundbar oder dein Tablet kann kein DTS oder kein
+7.1? Spurwerk erzeugt aus der Originalspur eine Dolby-Digital- (AC3/E-AC3)
+oder AAC-Spur — wahlweise in 5.1 oder Stereo, mit hochwertigen
+Downmix-Profilen. Das Original kannst du behalten oder ersetzen.
+
+**🎨 4K-Farbstich reparieren (Dolby Vision):**
+Manche 4K-MKVs (Dolby Vision Profil 7) zeigen auf vielen Geräten einen
+Grün-/Lilastich. Spurwerk erkennt das automatisch und entfernt auf
+Wunsch die Dolby-Vision-Daten — übrig bleibt normales HDR10, das überall
+läuft. Auch das: 100 % verlustfrei, Atmos-Ton und Untertitel bleiben.
+
+**🗂 Viele Dateien auf einmal:**
+Ganze Serienstaffel reinziehen, Regeln einmal festlegen (oder pro Datei
+anpassen), ein Klick auf Start — Spurwerk arbeitet die Liste ab.
+Erledigte Dateien verschwinden aus der Warteschlange, Fehler bleiben
+sichtbar.
+
+## So startest du
+
+1. **`Spurwerk.exe` herunterladen** und in einen beliebigen Ordner legen
+   (keine Installation nötig).
+2. **Beim ersten Start** bietet Spurwerk an, die benötigten freien
+   Werkzeuge (MKVToolNix, FFmpeg — zusammen ca. 195 MB) automatisch
+   herunterzuladen. Ein Klick, einmalig, fertig.
+3. **MKV-Dateien ins Fenster ziehen.** Spurwerk analysiert sie, wendet
+   dein Profil an (z. B. „Deutsch bevorzugt") und zeigt dir in Klartext,
+   was passieren wird. Passt? **Start.**
+
+> **Windows-Hinweis:** Beim ersten Start kann Windows SmartScreen warnen
+> („Unbekannter Herausgeber") — das ist bei kostenlosen Tools ohne
+> teures Code-Zertifikat normal. Über „Weitere Informationen →
+> Trotzdem ausführen" geht es weiter.
+
+## Die Bedienung in einem Bild
+
+- **Dateiliste oben:** deine Warteschlange. Jede Datei kann ihr eigenes
+  Profil und Zielformat haben — die Plan-Spalte zeigt es an.
+- **Profil-Zeile:** wählt die Automatik („Deutsch bevorzugt",
+  „Nur remuxen — alles behalten", …). Über **Bearbeiten…** baust du
+  eigene Profile, **Auf alle Dateien** überträgt die Einstellung.
+- **Spurtabelle:** das Herzstück. Jede Zeile eine Spur — Häkchen =
+  kommt mit. Klick auf die Aktion-Spalte einer Audiospur:
+  *Kopieren*, *Kopie + Konvertierung* oder *Ersetzen*.
+  Rechtsklick auf die Videospur: Dolby-Vision-Reparatur.
+- **Start-Button:** sagt vorher exakt, was passiert
+  („5 Dateien · 12 Spuren verlustfrei · 3 Konvertierungen → AC3 5.1").
+
+## Häufige Fragen
+
+**Werden meine Originaldateien verändert?**
+Nein, niemals. Spurwerk schreibt immer neue Dateien (Standard:
+`Film_remux.mkv` daneben). Ausgabeort und -name sind änderbar
+(Rechtsklick auf die Datei).
+
+**Was heißt „verlustfrei"?**
+Beim Remuxen und bei der DV-Reparatur werden Video und Ton bitgenau
+kopiert — null Qualitätsverlust. Nur wenn du bewusst eine neue Tonspur
+erzeugst (z. B. DTS → Dolby Digital), wird diese eine Spur neu kodiert.
+
+**Warum gibt es 7.1 nur als AAC?**
+AC3 endet technisch bei 5.1, und FFmpeg kann kein echtes E-AC3 7.1
+erzeugen. Spurwerk bietet ehrlich nur an, was wirklich geht — und
+rechnet nie künstlich hoch (kein Fake-7.1).
+
+**Warum ist „DV entfernen" bei manchen Dateien gesperrt?**
+Dolby Vision **Profil 5** hat kein HDR10-Fallback — ohne die DV-Daten
+wären die Farben kaputt. Spurwerk sperrt das und erklärt warum, statt
+eine unbrauchbare Datei zu erzeugen.
+
+**Welche Systemvoraussetzungen?**
+Windows 10/11 (64-bit). Die Werkzeuge lädt Spurwerk selbst.
+
+## Die Werkzeuge dahinter
+
+Spurwerk orchestriert bewährte freie Software: **MKVToolNix**
+(mkvtoolnix.download), **FFmpeg** (gyan.dev/BtbN) und **dovi_tool**
+(quietvoid) — alle unter GPL/Open-Source-Lizenzen. Spurwerk liefert sie
+nicht mit, sondern lädt sie auf Wunsch von den offiziellen Quellen,
+geprüft per SHA-256. Für „DV → Profil 8.1 (MP4)" wird zusätzlich
+**MP4Box** (gpac.io) benötigt — einmal installieren, Pfad im
+⚙-Werkzeuge-Dialog wählen.
+
+---
+
+Version: siehe Titelleiste · Änderungen: [CHANGELOG.md](CHANGELOG.md) ·
+Für Entwickler: [DEVELOPMENT.md](DEVELOPMENT.md)
+
+© xeproX · gebaut mit Python & ttkbootstrap

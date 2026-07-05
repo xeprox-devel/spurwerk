@@ -10,6 +10,7 @@ import ttkbootstrap as ttk
 import config as appconfig
 from ui import theme
 from ui.main_window import MainWindow
+from version import APP_NAME, __version__
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -29,8 +30,8 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
     nur mit ttkbootstrap.Window (HiDPI, Theme, place_window_center)."""
 
     def __init__(self) -> None:
-        super().__init__(title="Spurwerk", themename="darkly",
-                         iconphoto=None, hdpi=True)
+        super().__init__(title=f"{APP_NAME} {__version__}",
+                         themename="darkly", iconphoto=None, hdpi=True)
         theme.register(self.style)
         theme.apply_dark_titlebar(self)
         self._set_icon()
