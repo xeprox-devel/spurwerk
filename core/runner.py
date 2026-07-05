@@ -108,6 +108,13 @@ class JobRunner:
 
     def _run_single(self, plan: FilePlan) -> bool:
         settings = plan.stereo
+        # Sicherheitsnetz: Container-Endung muss zum Video-Modus passen —
+        # DV→8.1 IMMER .mp4 (der dvh1-Tag/mov_text scheitert sonst im
+        # Matroska-Muxer), sonst .mkv. Unabhängig davon, was die UI setzte.
+        want_ext = ".mp4" if plan.video_mode == dv.VIDEO_MODE_DV81 else ".mkv"
+        if not plan.output_path.lower().endswith(want_ext):
+            plan.output_path = str(Path(plan.output_path).with_suffix(want_ext))
+
         plan.status = FileStatus.RUNNING
         plan.error = ""
         self._file_status(plan)

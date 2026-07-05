@@ -21,6 +21,13 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   (MKV, verlustfrei) oder **DV → 8.1 (MP4)**.
 
 ### Behoben
+- **DV → 8.1 (MP4) scheiterte, wenn nach der Modus-Wahl noch das Profil
+  gewechselt, „Auf alle Dateien" geklickt oder der Ausgabeordner geändert
+  wurde**: Der Ausgabepfad fiel dann auf `.mkv` zurück, und der MP4-Mux
+  (dvh1-Tag/mov_text) bricht im Matroska-Container ab. Jetzt behalten alle
+  diese Aktionen die DV-Endung, und der Runner erzwingt zusätzlich hart
+  `.mp4` für DV-8.1 bzw. `.mkv` sonst — so kann diese Kombination nie mehr
+  crashen.
 - **DV-Analyse blieb ohne Grund gesperrt, wenn `ffprobe.exe` fehlte**,
   obwohl die FFmpeg-Zeile „gefunden" zeigte (ältere Downloads hatten
   ffprobe nicht mitgebracht). Die FFmpeg-Zeile prüft jetzt ffprobe mit

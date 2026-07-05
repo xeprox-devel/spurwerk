@@ -625,9 +625,7 @@ class MainWindow(ttk.Frame):
             plan.stereo = replace(self.profile.stereo)
             self.stereo = plan.stereo
             reapply_rules(plan, self.profile)
-            if not plan.output_manual:
-                plan.output_path = self.profile.output.output_path_for(
-                    plan.media.path)
+            self._refresh_output_name(plan)   # DV-Endung (.mp4/[HDR10]) erhalten
         else:
             self.stereo = replace(self.profile.stereo)
 
@@ -644,8 +642,7 @@ class MainWindow(ttk.Frame):
             plan.profile_name = self.profile.name
             plan.stereo = replace(self.stereo)
             reapply_rules(plan, self.profile)
-            if not plan.output_manual:
-                plan.output_path = self.profile.output.output_path_for(path)
+            self._refresh_output_name(plan)   # DV-Endung (.mp4/[HDR10]) erhalten
         selected = self._selected_plan()
         if selected is not None:
             self.stereo = selected.stereo
@@ -811,9 +808,9 @@ class MainWindow(ttk.Frame):
         self.profile.output.directory = folder
         label = Path(folder).name if folder else "Quellordner"
         self.output_btn.configure(text=f"Ausgabe: {label}  ▾")
-        for path, plan in self.plans.items():
-            if plan is not None and not plan.output_manual:
-                plan.output_path = self.profile.output.output_path_for(path)
+        for plan in self.plans.values():
+            if plan is not None:
+                self._refresh_output_name(plan)   # DV-Endung erhalten
         self._update_preview()
 
     # ══ Start / Abbruch ══════════════════════════════════════════════════

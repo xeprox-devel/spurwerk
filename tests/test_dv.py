@@ -191,3 +191,19 @@ class TestEndToEnd:
             capture_output=True, text=True).stdout)
         kinds = [s["codec_type"] for s in data["streams"]]
         assert "video" in kinds and "audio" in kinds
+
+    def test_dv81_erzwingt_mp4_endung(self, tmp_path):
+        """Regression: dv81 mit fälschlich .mkv-Ausgabepfad (z. B. nach
+        Profilwechsel) muss trotzdem ein gültiges MP4 erzeugen — der
+        dvh1-Tag scheitert sonst im Matroska-Muxer."""
+        media = scan_file(TOOLS["mkvmerge"], str(DV_FIXTURE))
+        plan = build_plan(media, profile_de(stereo_policy="never"))
+        plan.dv = dv.analyze(TOOLS["ffprobe"], str(DV_FIXTURE))
+        plan.video_mode = dv.VIDEO_MODE_DV81
+        plan.output_path = str(tmp_path / "falsch.mkv")   # falsche Endung!
+
+        runner = JobRunner(TOOLS, queue.Queue())
+        assert runner.run([plan]) == 1, plan.error
+        assert plan.output_path.endswith(".mp4")          # korrigiert
+        assert Path(plan.output_path).exists()
+        assert not (tmp_path / "falsch.mkv").exists()
