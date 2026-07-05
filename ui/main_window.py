@@ -60,20 +60,24 @@ class MainWindow(ttk.Frame):
         self.runner: JobRunner | None = None
         self._worker: threading.Thread | None = None
         self._scan_sem = threading.Semaphore(3)
+        self._tools_ready = threading.Event()   # gesetzt, sobald Tools erkannt
         self.tools: dict[str, str] = {}
         self.tool_status: dict[str, toolchain.ToolStatus] = {}
-        self.output_dir = ""          # App-Zustand, überlebt Profilwechsel
+        self.output_dir = cfg.output_dir     # fester Ausgabeordner (bleibt)
         self._running = False
         self._lock_buttons: list = []   # während des Laufs gesperrt
         self._lock_combos: list = []
+        self._pending_restore: dict[str, dict] = {}   # Session-Wiederherstellung
 
         self.columnconfigure(0, weight=1)
         self._build_header()
         self._build_empty_state()
         self._build_workspace()
+        self._restore_output_dir()
         self._sync_state()
 
         self.after(80, self._poll_queue)
+        self.after(120, self._restore_session)
         threading.Thread(target=self._probe_tools, daemon=True).start()
 
     # ══ Aufbau ═══════════════════════════════════════════════════════════
@@ -416,14 +420,30 @@ class MainWindow(ttk.Frame):
             audio_part += (f" (NEU: {langs} {plan.stereo.short_label()} "
                            f"{plan.stereo.bitrate})")
         parts.append(audio_part)
-        parts.append(f"{counts['subtitles']}× Untertitel")
+        # Untertitel — bei MP4 (DV→8.1) fallen Bild-Untertitel (PGS) weg
+        sub_note = ""
+        if plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
+            kept_subs = [plan.media.track(i) for i in plan.kept_ids("subtitles")]
+            dropped = [t for t in kept_subs
+                       if not dv_analysis.mp4_sub_compatible(t.codec_id)]
+            usable = len(kept_subs) - len(dropped)
+            parts.append(f"{usable}× Untertitel (MP4)")
+            if dropped:
+                sub_note = (f"MP4 kann {len(dropped)} Bild-Untertitel "
+                            f"(PGS) nicht — nur Text bleibt. "
+                            f"MKV-Modus behält alle.")
+        else:
+            parts.append(f"{counts['subtitles']}× Untertitel")
         if plan.media.has_chapters:
             parts.append("Kapitel ✓")
         self.preview_label.configure(
             text="Ausgabe: " + " · ".join(parts)
                  + f"   →   {Path(plan.output_path).name}")
+        notes = list(plan.warnings)
+        if sub_note:
+            notes.append(sub_note)
         self.warn_label.configure(
-            text=("⚠ " + "  ·  ".join(plan.warnings)) if plan.warnings else "")
+            text=("⚠ " + "  ·  ".join(notes)) if notes else "")
 
     def _update_stereo_panel_visibility(self) -> None:
         # Das Panel zeigt und editiert die Konfiguration der AUSGEWÄHLTEN Datei
@@ -492,8 +512,13 @@ class MainWindow(ttk.Frame):
         self._sync_state()
         self._refresh_all()
         self.log.log(f"{len(added)} Datei(en) hinzugefügt.", "info")
+        self._safe_save()
 
     def _scan_worker(self, path: str) -> None:
+        # Auf die (asynchrone) Tool-Erkennung warten — sonst scheitert ein
+        # Scan, der zu früh startet (Sitzungs-Wiederherstellung oder ein
+        # Drag&Drop direkt nach dem Start), an fehlendem mkvmerge.
+        self._tools_ready.wait(timeout=20)
         with self._scan_sem:
             mkvmerge = self.tools.get("mkvmerge", "")
             try:
@@ -535,6 +560,7 @@ class MainWindow(ttk.Frame):
             self.file_list.select(first)
         self._sync_state()
         self._refresh_all()
+        self._safe_save()
 
     def _clear_files(self) -> None:
         if self._running:
@@ -544,6 +570,7 @@ class MainWindow(ttk.Frame):
         self.file_list.clear()
         self._sync_state()
         self._refresh_all()
+        self._safe_save()
 
     def _on_file_selected(self, path: str) -> None:
         self.selected = path
@@ -692,16 +719,23 @@ class MainWindow(ttk.Frame):
             self._refresh_all()
 
     def _refresh_output_name(self, plan: FilePlan) -> None:
-        """Dateiname folgt dem Video-Modus: „ [HDR10].mkv“ / „ [DV8.1].mp4“."""
+        """Dateiname folgt Video-Modus und Bereinigungs-Option."""
         if plan.output_manual:
             return
         base = Path(self.profile.output.output_path_for(plan.media.path))
+        stem = base.stem
+        if self.cfg.clean_names:
+            # Original-Stamm bereinigen, danach ggf. Suffix wieder anhängen
+            from core.naming import clean_filename
+            cleaned = Path(clean_filename(Path(plan.media.path).name)).stem
+            suffix = self.profile.output.suffix or ""
+            stem = f"{cleaned}{suffix}"
         if plan.video_mode == dv_analysis.VIDEO_MODE_HDR10:
-            name = f"{base.stem} [HDR10].mkv"
+            name = f"{stem} [HDR10].mkv"
         elif plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
-            name = f"{base.stem} [DV8.1].mp4"
+            name = f"{stem} [DV8.1].mp4"
         else:
-            name = base.name
+            name = f"{stem}{base.suffix}"
         plan.output_path = str(base.with_name(name))
 
     def _on_plan_edited(self) -> None:
@@ -794,9 +828,23 @@ class MainWindow(ttk.Frame):
                          command=lambda: self._set_output_dir(""))
         menu.add_command(label="Fester Ordner wählen …",
                          command=self._choose_output_dir)
+        menu.add_separator()
+        menu.add_checkbutton(
+            label="Dateinamen bereinigen (z. B. „Film (2025).mkv“)",
+            onvalue=True, offvalue=False,
+            variable=tk.BooleanVar(value=self.cfg.clean_names),
+            command=self._toggle_clean_names)
         menu.tk_popup(self.output_btn.winfo_rootx(),
                       self.output_btn.winfo_rooty()
                       + self.output_btn.winfo_height())
+
+    def _toggle_clean_names(self) -> None:
+        self.cfg.clean_names = not self.cfg.clean_names
+        for plan in self.plans.values():
+            if plan is not None:
+                self._refresh_output_name(plan)
+        self._refresh_all()
+        self._safe_save()
 
     def _choose_output_dir(self) -> None:
         folder = filedialog.askdirectory(title="Ausgabeordner wählen")
@@ -806,12 +854,77 @@ class MainWindow(ttk.Frame):
     def _set_output_dir(self, folder: str) -> None:
         self.output_dir = folder
         self.profile.output.directory = folder
-        label = Path(folder).name if folder else "Quellordner"
-        self.output_btn.configure(text=f"Ausgabe: {label}  ▾")
+        self.cfg.output_dir = folder          # dauerhaft merken
+        self._apply_output_button()
         for plan in self.plans.values():
             if plan is not None:
                 self._refresh_output_name(plan)   # DV-Endung erhalten
         self._update_preview()
+        self._safe_save()
+
+    def _restore_output_dir(self) -> None:
+        """Gemerkten Ausgabeordner beim Start anwenden."""
+        folder = self.output_dir
+        if folder and not Path(folder).is_dir():
+            folder = ""                       # Ordner existiert nicht mehr
+            self.output_dir = ""
+            self.cfg.output_dir = ""
+        self.profile.output.directory = folder
+        self._apply_output_button()
+
+    def _apply_output_button(self) -> None:
+        """Grüne Umrandung, wenn ein fester Ordner gesetzt ist — passend zu
+        den anderen Outline-Buttons, nur als „eingestellt“-Signal."""
+        if self.output_dir:
+            self.output_btn.configure(
+                text=f"Ausgabe: {Path(self.output_dir).name}  ▾",
+                bootstyle="success-outline")
+        else:
+            self.output_btn.configure(text="Ausgabe: Quellordner  ▾",
+                                      bootstyle="secondary-outline")
+
+    # ══ Sitzung speichern / wiederherstellen ═════════════════════════════
+
+    def _save_session(self) -> None:
+        """Offene (nicht erledigte) Jobs für den nächsten Start merken."""
+        from core import session
+        self.cfg.session = [
+            session.serialize_plan(p) for p in self.plans.values()
+            if p is not None and p.status is not FileStatus.DONE]
+
+    def _safe_save(self) -> None:
+        self.cfg.log_expanded = self.log.expanded
+        self._save_session()
+        try:
+            appconfig.save(self.cfg)
+        except OSError:
+            pass
+
+    def _restore_session(self) -> None:
+        """Beim Start die zuletzt offenen Jobs wieder laden."""
+        saved = list(self.cfg.session)
+        if not saved:
+            return
+        paths = []
+        for job in saved:
+            path = job.get("path", "")
+            if path and Path(path).exists():
+                self._pending_restore[path] = job
+                paths.append(path)
+        if paths:
+            self.log.log(f"{len(paths)} Job(s) aus der letzten Sitzung "
+                         f"wiederhergestellt.", "info")
+            self.add_files(paths)
+
+    def _apply_restore(self, plan: FilePlan, job: dict) -> None:
+        """Gespeicherte Konfiguration auf einen frisch gescannten Plan legen."""
+        from core import session
+        session.restore_plan(plan, job)
+        if job.get("output_manual"):
+            plan.output_manual = True
+            plan.output_path = job.get("output_path", plan.output_path)
+        else:
+            self._refresh_output_name(plan)
 
     # ══ Start / Abbruch ══════════════════════════════════════════════════
 
@@ -937,12 +1050,19 @@ class MainWindow(ttk.Frame):
             plan.stereo = replace(self.stereo)
             plan.profile_name = self.profile.name
             plan.dv = msg[3] if len(msg) > 3 else None
+            job = self._pending_restore.pop(path, None)
+            if job is not None:
+                self.profile = self.cfg.profile(
+                    job.get("profile_name") or self.profile.name)
+                self.profile.output.directory = self.output_dir
+                self._apply_restore(plan, job)
             if plan.dv is not None and plan.dv.dv_profile == 7:
                 plan.warnings.append(
                     "Dolby Vision Profil 7 erkannt — viele Geräte zeigen "
                     "das aus MKV falsch an. Rechtsklick auf die Videospur "
                     "→ „DV entfernen (HDR10)“.")
             self.plans[path] = plan
+            self._refresh_output_name(plan)
             self._update_file_row(path, plan)
             for warning in plan.warnings:
                 self.log.log(f"{Path(path).name}: {warning}", "step")
@@ -960,6 +1080,7 @@ class MainWindow(ttk.Frame):
             self.log.log(f"{Path(path).name}: {error}", "error")
         elif kind == "TOOLS":
             self.tool_status = msg[1]
+            self._tools_ready.set()   # wartende Scans dürfen loslegen
             self._update_tool_chips()
         elif kind == "BATCH_DONE":
             self._on_batch_done(msg[1], msg[2], msg[3])
@@ -1009,6 +1130,7 @@ class MainWindow(ttk.Frame):
                 self.file_list.select(self.selected)
         self._sync_state()
         self._refresh_all()
+        self._safe_save()   # erledigte Jobs aus der gespeicherten Sitzung raus
 
     # ══ Tools ════════════════════════════════════════════════════════════
 
@@ -1070,9 +1192,5 @@ class MainWindow(ttk.Frame):
             if self.runner:
                 self.runner.terminate_active()
             self._worker.join(timeout=3)
-        self.cfg.log_expanded = self.log.expanded
-        try:
-            appconfig.save(self.cfg)
-        except OSError:
-            pass  # z. B. schreibgeschützter Ordner — Beenden geht trotzdem
+        self._safe_save()   # offene Jobs + Einstellungen für den Neustart
         return True

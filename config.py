@@ -29,6 +29,9 @@ class AppConfig:
     active_profile: str = "Deutsch bevorzugt"
     user_profiles: list[RuleProfile] = field(default_factory=list)
     log_expanded: bool = False
+    output_dir: str = ""                       # fester Ausgabeordner (bleibt)
+    clean_names: bool = False                  # Dateinamen bereinigen
+    session: list[dict] = field(default_factory=list)  # offene Jobs
 
     def all_profiles(self) -> list[RuleProfile]:
         return builtin_profiles() + self.user_profiles
@@ -58,6 +61,9 @@ def save(cfg: AppConfig) -> None:
         "tools": cfg.tools,
         "active_profile": cfg.active_profile,
         "log_expanded": cfg.log_expanded,
+        "output_dir": cfg.output_dir,
+        "clean_names": cfg.clean_names,
+        "session": cfg.session,
         "user_profiles": [_profile_to_dict(p) for p in cfg.user_profiles],
     }
     CONFIG_FILE.write_text(
@@ -94,6 +100,9 @@ def _from_dict(data: dict) -> AppConfig:
         tools=dict(data.get("tools", {})),
         active_profile=data.get("active_profile", "Deutsch bevorzugt"),
         log_expanded=bool(data.get("log_expanded", False)),
+        output_dir=data.get("output_dir", ""),
+        clean_names=bool(data.get("clean_names", False)),
+        session=list(data.get("session", [])),
         user_profiles=profiles,
     )
 

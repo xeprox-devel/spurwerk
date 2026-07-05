@@ -7,6 +7,22 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Sitzung wird gemerkt**: Offene (noch nicht gestartete) Jobs samt ihrer
+  Konfiguration — Profil, Zielformat/Video-Modus, Spur-Overrides,
+  Ausgabename — überleben das Schließen und sind beim nächsten Start
+  wieder da (Quelldateien werden dafür neu eingelesen). Erledigte Jobs
+  verschwinden.
+- **Fester Ausgabeordner bleibt dauerhaft** gespeichert und ist am
+  grün umrandeten „Ausgabe"-Button erkennbar (bis man ihn ändert).
+- **Dateinamen bereinigen** (Ausgabe-Menü, optional): macht aus
+  „Film.2025.UHD.WEB-DL.HEVC…mkv" ein sauberes „Film (2025).mkv".
+- Modus A zeigt den PGS-Untertitel-Hinweis jetzt schon in der Vorschau
+  (nicht erst während des Laufs).
+
+### Behoben
+- **Sitzungs-Wiederherstellung und ein Drag&Drop direkt nach dem Start
+  scheiterten am Scan**, weil die Tool-Erkennung noch lief. Scans warten
+  jetzt auf die fertige Tool-Erkennung.
 - **Dolby Vision → Profil 8.1 (MP4)** ist jetzt voll nutzbar — **ohne
   MP4Box**. FFmpeg (8.1+) schreibt die DV-Signalisierung selbst; die
   Pipeline (Video bitgenau + dovi_tool-Konvertierung bei Profil 7 +
