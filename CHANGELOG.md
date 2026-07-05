@@ -5,7 +5,13 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 [SemVer](https://semver.org/lang/de/) (MAJOR.MINOR.PATCH).
 
 ## [Unreleased]
-_(hier landen Änderungen für die nächste Version)_
+
+### Behoben
+- **DV-Analyse blieb ohne Grund gesperrt, wenn `ffprobe.exe` fehlte**,
+  obwohl die FFmpeg-Zeile „gefunden" zeigte (ältere Downloads hatten
+  ffprobe nicht mitgebracht). Die FFmpeg-Zeile prüft jetzt ffprobe mit
+  und fordert bei Bedarf zum Neu-Download auf; „Fehlende Tools
+  herunterladen" holt ffprobe nach.
 
 ## [1.0.0] — 2026-07-04
 

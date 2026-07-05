@@ -128,20 +128,41 @@ class ToolManagerDialog(ttk.Toplevel):
         self._status = status
         for kind, row in self.rows.items():
             info = status.get(_TOOL_EXES[kind])
-            if info and info.ok:
+            # Der FFmpeg-Download liefert ffmpeg.exe UND ffprobe.exe (für die
+            # DV-Analyse). Fehlt ffprobe, gilt die Zeile als unvollständig —
+            # sonst bliebe die DV-Funktion ohne sichtbaren Grund gesperrt.
+            ffprobe_missing = (kind == "ffmpeg"
+                               and not (status.get("ffprobe")
+                                        and status["ffprobe"].ok))
+            if info and info.ok and not ffprobe_missing:
                 row["status"].configure(
                     image=self._dot_ok,
                     text=f"  gefunden — Version {info.version}")
+                row["path"].set(info.path)
+            elif info and info.ok and ffprobe_missing:
+                row["status"].configure(
+                    image=self._dot_bad,
+                    text="  unvollständig — ffprobe fehlt (für DV-Analyse) "
+                         "→ neu herunterladen")
                 row["path"].set(info.path)
             else:
                 row["status"].configure(image=self._dot_bad,
                                         text="  nicht gefunden")
 
     def _missing(self) -> list[str]:
+        def incomplete(kind: str) -> bool:
+            info = self._status.get(_TOOL_EXES[kind])
+            if not (info and info.ok):
+                return True
+            # ffprobe hängt am FFmpeg-Download
+            if kind == "ffmpeg":
+                pr = self._status.get("ffprobe")
+                return not (pr and pr.ok)
+            return False
+
         return [k for k in self.rows
                 if k in downloader.DOWNLOADERS   # mp4box: nur manueller Pfad
-                and not (self._status.get(_TOOL_EXES[k])
-                         and self._status[_TOOL_EXES[k]].ok)]
+                and incomplete(k)]
 
     # ── Aktionen ──────────────────────────────────────────────────────────
 

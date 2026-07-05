@@ -253,7 +253,7 @@ class TrackTable(ttk.Frame):
 
         # DV entfernen → HDR10
         if dvi is None:
-            reason = "DV-Analyse fehlt (ffprobe nicht gefunden)"
+            reason = "DV-Analyse fehlt — FFmpeg über ⚙ neu laden (bringt ffprobe mit)"
         elif not self.dovi_ok:
             reason = dvi.hdr10_blocked_reason() or "dovi_tool fehlt (⚙)"
         else:
@@ -268,7 +268,7 @@ class TrackTable(ttk.Frame):
 
         # DV → 8.1 (MP4) — Modus A
         if dvi is None:
-            reason81 = "DV-Analyse fehlt (ffprobe nicht gefunden)"
+            reason81 = "DV-Analyse fehlt — FFmpeg über ⚙ neu laden"
         else:
             reason81 = (dvi.dv81_blocked_reason()
                         or ("dovi_tool fehlt (⚙)" if not self.dovi_ok else None)
