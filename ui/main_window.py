@@ -94,7 +94,7 @@ class MainWindow(ttk.Frame):
                   ).pack(side="left")
         ttk.Label(brand, text="WERK", font=("Segoe UI", 13, "bold"),
                   foreground=theme.COLORS["primary"]).pack(side="left")
-        ttk.Label(brand, text=f"  v{__version__}", font=("Segoe UI", 9),
+        ttk.Label(brand, text=f"  {__version__}", font=("Segoe UI", 9),
                   foreground=theme.MUTED).pack(side="left", anchor="s",
                                                pady=(0, 2))
 
@@ -111,8 +111,14 @@ class MainWindow(ttk.Frame):
             chip.bind("<Button-1>", lambda _e: self._open_tool_manager())
             self.tool_chips[name] = chip
 
+        ttk.Button(chips, text="ⓘ", width=3, bootstyle="secondary-outline",
+                   command=self._open_about).pack(side="left", padx=(0, 6))
         ttk.Button(chips, text="⚙", width=3, bootstyle="secondary-outline",
                    command=self._open_tool_manager).pack(side="left")
+
+    def _open_about(self) -> None:
+        from .about import AboutDialog
+        AboutDialog(self)
 
     def _build_empty_state(self) -> None:
         from .tool_setup import OnboardingCard
