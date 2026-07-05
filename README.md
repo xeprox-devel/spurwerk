@@ -8,6 +8,9 @@ unnötige Sprachen raus, auf Wunsch eine kompatible Tonspur dazu, und
 dabei **niemals neu berechnet** — was reinkommt, kommt in Originalqualität
 wieder raus. Deine Originaldateien bleiben immer unangetastet.
 
+**Download:** [aktuelle Version — GitHub-Releases](https://github.com/xeprox-devel/spurwerk/releases/latest)
+· [Projektseite mit Anleitung](https://ricardo-rehfeldt.de/tools/spurwerk/)
+
 ---
 
 ## Warum Spurwerk?
@@ -86,7 +89,8 @@ immer die Offline-Variante.
 
 ## So startest du
 
-1. **`Spurwerk.exe` herunterladen** und in einen beliebigen Ordner legen
+1. **[`Spurwerk.exe` herunterladen](https://github.com/xeprox-devel/spurwerk/releases/latest)**
+   und in einen beliebigen Ordner legen
    (keine Installation nötig).
 2. **Beim ersten Start** bietet Spurwerk an, die benötigten freien
    Werkzeuge (MKVToolNix, FFmpeg — zusammen ca. 195 MB) automatisch
@@ -157,4 +161,4 @@ TMDb unterstützt oder zertifiziert.
 Version: siehe Titelleiste · Änderungen: [CHANGELOG.md](CHANGELOG.md) ·
 Für Entwickler: [DEVELOPMENT.md](DEVELOPMENT.md)
 
-© xeproX-deveL · gebaut mit Python & ttkbootstrap
+© xeproX-deveL · gebaut mit Python & ttkbootstrap · Lizenz: [GPL-3.0](LICENSE)
