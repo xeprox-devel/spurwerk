@@ -6,61 +6,49 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-07-05
+
 ### Hinzugefügt
-- **Sitzung wird gemerkt**: Offene (noch nicht gestartete) Jobs samt ihrer
-  Konfiguration — Profil, Zielformat/Video-Modus, Spur-Overrides,
-  Ausgabename — überleben das Schließen und sind beim nächsten Start
-  wieder da (Quelldateien werden dafür neu eingelesen). Erledigte Jobs
-  verschwinden.
-- **Fester Ausgabeordner bleibt dauerhaft** gespeichert und ist am
-  grün umrandeten „Ausgabe"-Button erkennbar (bis man ihn ändert).
-- **Dateinamen bereinigen** (Ausgabe-Menü, optional): macht aus
-  „Film.2025.UHD.WEB-DL.HEVC…mkv" ein sauberes „Film (2025).mkv".
-- **Online-Titelabgleich (TMDb, optional)**: liefert den exakten,
-  kanonischen Filmtitel (z. B. „Obsession – Du sollst mich lieben
-  (2025)"). Wie Jellyfin kann ein **eingebauter API-Key** mitgeliefert
-  werden — dann muss sich der Endnutzer NICHT registrieren; ein eigener
-  Key ist optional und hat Vorrang. Läuft im Hintergrund beim Scan; ohne
-  Key oder bei Netzfehlern greift die Offline-Bereinigung. Es wird nur
-  der Suchtitel + Jahr gesendet.
-- Modus A zeigt den PGS-Untertitel-Hinweis jetzt schon in der Vorschau
-  (nicht erst während des Laufs).
+- **Dolby Vision → Profil 8.1 (MP4)** — ganz ohne MP4Box: FFmpeg (8.1+)
+  schreibt die DV-Signalisierung selbst. MP4-taugliches Audio (AAC/AC3/
+  E-AC3, inkl. Atmos) wird 1:1 kopiert, TrueHD/DTS nach E-AC3 gewandelt,
+  Text-Untertitel zu mov_text; Bild-Untertitel (PGS) werden mit Hinweis
+  weggelassen. Der Video-Codec ist damit pro Datei frei wählbar:
+  **Kopieren** (DV + HDR10 unangetastet), **DV → HDR10** oder
+  **DV → 8.1 (MP4)**.
+- **Sitzung wird gemerkt**: Offene Jobs samt Konfiguration (Profil,
+  Video-Modus, Spur-Overrides, Ausgabename) überleben das Schließen und
+  sind beim nächsten Start wieder da; erledigte Jobs verschwinden.
+- **Fester Ausgabeordner** bleibt dauerhaft gespeichert (grün umrandeter
+  „Ausgabe"-Button).
+- **Dateinamen bereinigen** (optional): „Film.2025.UHD.WEB-DL…mkv" →
+  „Film.mkv".
+- **Online-Titelabgleich (TMDb, optional)**: liefert den exakten Filmtitel
+  (z. B. „Obsession – Du sollst mich lieben"). Ein **eingebauter API-Key**
+  kann mitgeliefert werden (wie bei Jellyfin) — dann ohne Registrierung;
+  ein eigener Key hat Vorrang. Ohne Key/Netz greift die Offline-Bereinigung.
+  Es wird nur der Suchtitel + Jahr gesendet.
+- Modus A zeigt den PGS-Untertitel-Hinweis schon in der Vorschau.
 
 ### Behoben
-- **Sitzungs-Wiederherstellung und ein Drag&Drop direkt nach dem Start
-  scheiterten am Scan**, weil die Tool-Erkennung noch lief. Scans warten
-  jetzt auf die fertige Tool-Erkennung.
-- **Dolby Vision → Profil 8.1 (MP4)** ist jetzt voll nutzbar — **ohne
-  MP4Box**. FFmpeg (8.1+) schreibt die DV-Signalisierung selbst; die
-  Pipeline (Video bitgenau + dovi_tool-Konvertierung bei Profil 7 +
-  MP4-Mux) läuft mit den Werkzeugen, die Spurwerk ohnehin lädt. MP4-
-  taugliches Audio (AAC/AC3/E-AC3, inkl. Atmos in E-AC3) wird 1:1
-  kopiert, TrueHD/DTS nach E-AC3 gewandelt, Text-Untertitel zu mov_text;
-  Bild-Untertitel (PGS) und nicht MP4-taugliche Spuren werden mit Hinweis
-  weggelassen (dafür ist der MKV-Modus da). Quellen, die bereits Profil 8
-  sind, werden nur umverpackt (keine RPU-Konvertierung).
-- Der Video-Codec ist damit pro Datei frei wählbar: **unangetastet
-  übernehmen** (Kopieren, behält DV/HDR10+ komplett), **DV → HDR10**
-  (MKV, verlustfrei) oder **DV → 8.1 (MP4)**.
+- **DV-Remux-Ausgabe lief auf wählerischen Hardware-Playern nicht**
+  (Rockchip/ARM-Boxen wie ROCK64), obwohl der Stream valide war und auf
+  PC-Playern (VLC) lief. Die HEVC-Extraktion nutzt jetzt **mkvextract**
+  (nativer MKVToolNix-Round-Trip, exakte Stream-Struktur) statt ffmpegs
+  umgeschriebenem Bitstream; ffmpeg bleibt Fallback.
+- **DV → 8.1 (MP4) konnte abstürzen**, wenn nach der Modus-Wahl noch
+  Profil oder Ausgabeordner geändert wurde (Ausgabepfad fiel auf `.mkv`
+  zurück, der MP4-Mux scheitert im Matroska-Container). Die Endung wird
+  jetzt hart erzwungen.
+- **DV-Analyse blieb gesperrt, wenn `ffprobe.exe` fehlte**, obwohl die
+  FFmpeg-Zeile „gefunden" zeigte. Die FFmpeg-Zeile prüft ffprobe jetzt mit
+  und lädt es bei Bedarf nach.
+- **Sitzungs-Wiederherstellung und früher Drag&Drop scheiterten am Scan**,
+  weil die Tool-Erkennung noch lief. Scans warten jetzt darauf.
 
-### Behoben
-- **DV-Remux-Ausgabe lief auf manchen Hardware-Playern (Rockchip/ARM-Boxen
-  wie ROCK64) nicht**, obwohl der Stream valide war und auf PC-Playern
-  (VLC) lief. Die HEVC-Extraktion nutzt jetzt **mkvextract** (der native
-  MKVToolNix-Round-Trip bewahrt die exakte Stream-Struktur) statt ffmpegs
-  umgeschriebenem Bitstream; ffmpeg bleibt Fallback, falls mkvextract fehlt.
-- **DV → 8.1 (MP4) scheiterte, wenn nach der Modus-Wahl noch das Profil
-  gewechselt, „Auf alle Dateien" geklickt oder der Ausgabeordner geändert
-  wurde**: Der Ausgabepfad fiel dann auf `.mkv` zurück, und der MP4-Mux
-  (dvh1-Tag/mov_text) bricht im Matroska-Container ab. Jetzt behalten alle
-  diese Aktionen die DV-Endung, und der Runner erzwingt zusätzlich hart
-  `.mp4` für DV-8.1 bzw. `.mkv` sonst — so kann diese Kombination nie mehr
-  crashen.
-- **DV-Analyse blieb ohne Grund gesperrt, wenn `ffprobe.exe` fehlte**,
-  obwohl die FFmpeg-Zeile „gefunden" zeigte (ältere Downloads hatten
-  ffprobe nicht mitgebracht). Die FFmpeg-Zeile prüft jetzt ffprobe mit
-  und fordert bei Bedarf zum Neu-Download auf; „Fehlende Tools
-  herunterladen" holt ffprobe nach.
+### Geändert
+- Bereinigte/TMDb-Dateinamen ohne „_remux"-Suffix; der Name enthält nur
+  noch den Titel (kein Jahr).
 
 ## [1.0.0] — 2026-07-04
 

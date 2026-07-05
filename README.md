@@ -10,6 +10,39 @@ wieder raus. Deine Originaldateien bleiben immer unangetastet.
 
 ---
 
+## Warum Spurwerk?
+
+Für das, was Spurwerk in **einem Durchgang** macht, brauchte man bisher
+**mehrere Programme nebeneinander** — und musste bei jedem die Eigenheiten
+kennen:
+
+- **MKVToolNix** remuxt verlustfrei, kann aber kein Audio umwandeln und
+  hat keine Automatik über viele Dateien hinweg.
+- **FFmpeg-Oberflächen** wandeln Audio um, denken aber in Kommandozeilen
+  statt in Spuren — und ob das Video wirklich unberührt bleibt, ist oft
+  undurchsichtig.
+- **Extraktions-Tools** können Spuren nur zerlegen, nicht wieder
+  zusammensetzen.
+- **Dolby-Vision-Reparatur** war Handarbeit mit `dovi_tool` auf der
+  Kommandozeile.
+
+Spurwerk führt das in **einem Werkzeug** zusammen: Spuren verlustfrei
+auswählen, dabei bei Bedarf eine kompatible Tonspur erzeugen, Dolby Vision
+gerätegerecht anpassen — gesteuert von einer Sprachregel-Automatik, die dir
+**vorher in Klartext zeigt**, was passieren wird. Alles verlustfrei, wo es
+geht; das Videobild wird nie neu komprimiert.
+
+Der Anspruch dahinter: die **Übersicht eines einfachen Tools** mit der
+**Kontrolle eines Profi-Werkzeugs** verbinden — deutschsprachig, mit
+Stapelverarbeitung als Normalfall und einer Ein-Klick-Einrichtung, die
+sich die nötigen Werkzeuge selbst holt.
+
+> **Ehrlich bleibt:** Für exotische Matroska-Spezialfälle (Kapitel-Editor,
+> Tags, Anhänge im Detail) ist MKVToolNix weiterhin die Referenz. Spurwerk
+> zielt auf die **alltäglichen Aufgaben** — und macht die richtig gut.
+
+---
+
 ## Was kann Spurwerk?
 
 **🧹 Ausmisten (verlustfrei):**
@@ -44,12 +77,12 @@ sichtbar. Deine Warteschlange und Einstellungen bleiben beim nächsten
 Start erhalten.
 
 **🏷 Saubere Dateinamen (optional):**
-Aus `Film.2025.UHD.WEB-DL.HEVC…mkv` wird `Film (2025).mkv` — komplett
-offline. Auf Wunsch gleicht Spurwerk den Titel zusätzlich online mit
-**TMDb** ab und liefert die exakte Schreibweise (z. B. „Obsession – Du
-sollst mich lieben (2025)"). Je nach Ausgabe funktioniert das direkt
-oder mit einem eigenen, kostenlosen TMDb-Key. Alles umschaltbar im
-Ausgabe-Menü; ohne Netz greift immer die Offline-Variante.
+Aus `Film.2025.UHD.WEB-DL.HEVC…mkv` wird `Film.mkv` — komplett offline.
+Auf Wunsch gleicht Spurwerk den Titel zusätzlich online mit **TMDb** ab
+und liefert die exakte Schreibweise (z. B. „Obsession - Du sollst mich
+lieben"). Je nach Ausgabe funktioniert das direkt oder mit einem eigenen,
+kostenlosen TMDb-Key. Alles umschaltbar im Ausgabe-Menü; ohne Netz greift
+immer die Offline-Variante.
 
 ## So startest du
 
