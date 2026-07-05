@@ -20,10 +20,15 @@ SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
 USER_AGENT = "Spurwerk/1.0"
 
 # Eingebauter API-Key (wie bei Jellyfin) — damit Endnutzer sich NICHT
-# registrieren müssen. Wird vom Verteiler EINMALIG mit einem kostenlosen
-# TMDb-v3-Key befüllt (themoviedb.org → Einstellungen → API). Bleibt er
-# leer, muss der Nutzer seinen eigenen Key eintragen oder es läuft offline.
-BUILTIN_KEY = ""
+# registrieren müssen. Der öffentliche Quellcode bleibt KEY-FREI: der Key
+# wird beim Build aus der Umgebungsvariable SPURWERK_TMDB_KEY in das
+# gitignorte Modul core/_apikey.py geschrieben (siehe build.ps1). Ohne
+# eingebauten Key nutzt der Anwender seinen eigenen Key oder es läuft
+# offline weiter.
+try:
+    from ._apikey import KEY as BUILTIN_KEY   # nur im gebauten Release
+except ImportError:
+    BUILTIN_KEY = ""
 
 
 def resolved_key(user_key: str = "") -> str:

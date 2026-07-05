@@ -8,6 +8,9 @@ __pycache__/
 config.ini
 config.json
 
+# Eingebauter TMDb-Key (wird beim Build generiert, nie ins Repo)
+core/_apikey.py
+
 # Externe Tool-Binaries (werden vom Downloader geholt)
 tools/
 

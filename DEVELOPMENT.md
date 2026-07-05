@@ -49,6 +49,17 @@ Hintergründe und alle Architektur-Entscheidungen: [UMSETZUNGSPLAN.md](UMSETZUNG
 .\build.ps1        # dist\Spurwerk.exe (x64, onefile, mit Versions-Metadaten)
 ```
 
+**TMDb-Key einbetten (optional, registrierungsfreier Titelabgleich):**
+Der öffentliche Quellcode bleibt key-frei. Beim Build wird ein Key aus der
+Umgebungsvariable in das gitignorte Modul `core/_apikey.py` geschrieben:
+
+```
+$env:SPURWERK_TMDB_KEY = "dein_tmdb_v3_key"; .\build.ps1
+```
+
+Ohne gesetzte Variable entsteht ein Release ohne eingebauten Key (Anwender
+nutzt dann eigenen Key oder die Offline-Bereinigung).
+
 Release-Ablauf: Version in `version.py` erhöhen → CHANGELOG-Eintrag aus
 [Unreleased] machen → Tests laufen lassen → `build.ps1` → `git tag vX.Y.Z`.
 Für den x86-Build dieselben Schritte in einer 32-bit-Python-Installation.

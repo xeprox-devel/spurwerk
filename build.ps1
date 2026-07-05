@@ -6,7 +6,21 @@
 
 $python = ".\.venv\Scripts\python.exe"
 
+# TMDb-Key (optional) aus der Umgebung in die gitignorte Key-Datei schreiben,
+# damit der gebaute Release ihn eingebaut hat - der Quellcode bleibt key-frei.
+if ($env:SPURWERK_TMDB_KEY) {
+    "KEY = `"$($env:SPURWERK_TMDB_KEY)`"" | Out-File -Encoding utf8 "core\_apikey.py"
+    Write-Host "TMDb-Key eingebettet (core\_apikey.py)."
+} else {
+    Write-Host "Kein SPURWERK_TMDB_KEY gesetzt - Release ohne eingebauten Key."
+}
+
 & $python assets\make_version_info.py
+
+# Optionales Key-Modul nur einbinden, wenn es existiert (try/except-Import
+# wird von PyInstaller sonst nicht automatisch erkannt)
+$extra = @()
+if (Test-Path "core\_apikey.py") { $extra += "--hidden-import=core._apikey" }
 
 & $python -m PyInstaller --noconfirm --clean --onefile --noconsole `
     --name "Spurwerk" `
@@ -14,6 +28,7 @@ $python = ".\.venv\Scripts\python.exe"
     --add-data "spurwerk.ico;." `
     --version-file "build\file_version_info.txt" `
     --collect-all tkinterdnd2 `
+    @extra `
     main.py
 
 if ($LASTEXITCODE -eq 0) {
