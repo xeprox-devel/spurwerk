@@ -535,10 +535,10 @@ class MainWindow(ttk.Frame):
                     dv_info = None   # DV-Analyse ist optional, nie blockierend
             # TMDb-Titelabgleich (optional) — läuft schon im Scan-Thread
             canonical = ""
-            if self.cfg.online_names and self.cfg.tmdb_key:
-                from core import tmdb
-                canonical = tmdb.canonical_name(
-                    self.cfg.tmdb_key, Path(path).name) or ""
+            from core import tmdb
+            key = tmdb.resolved_key(self.cfg.tmdb_key)
+            if self.cfg.online_names and key:
+                canonical = tmdb.canonical_name(key, Path(path).name) or ""
             self.ui_q.put(("SCANNED", path, media, dv_info, canonical))
 
     def _add_files_dialog(self) -> None:
@@ -863,9 +863,12 @@ class MainWindow(ttk.Frame):
         self._safe_save()
 
     def _toggle_online_names(self) -> None:
+        from core import tmdb
         turning_on = not self.cfg.online_names
-        if turning_on and not self.cfg.tmdb_key and not self._edit_tmdb_key():
-            return   # ohne Key kein Online-Abgleich
+        # Nur nach einem Key fragen, wenn weder eigener noch eingebauter da ist
+        if (turning_on and not tmdb.resolved_key(self.cfg.tmdb_key)
+                and not self._edit_tmdb_key()):
+            return
         self.cfg.online_names = turning_on
         if turning_on:
             self._fetch_titles_online()
@@ -885,7 +888,8 @@ class MainWindow(ttk.Frame):
 
     def _fetch_titles_online(self) -> None:
         """Für bereits geladene Dateien die TMDb-Titel im Hintergrund holen."""
-        if not (self.cfg.online_names and self.cfg.tmdb_key):
+        from core import tmdb
+        if not (self.cfg.online_names and tmdb.resolved_key(self.cfg.tmdb_key)):
             return
         targets = [p.media.path for p in self.plans.values()
                    if p is not None and not p.canonical_name]
@@ -895,7 +899,8 @@ class MainWindow(ttk.Frame):
 
     def _title_worker(self, path: str) -> None:
         from core import tmdb
-        name = tmdb.canonical_name(self.cfg.tmdb_key, Path(path).name) or ""
+        key = tmdb.resolved_key(self.cfg.tmdb_key)
+        name = tmdb.canonical_name(key, Path(path).name) or ""
         if name:
             self.ui_q.put(("CANONICAL", path, name))
 

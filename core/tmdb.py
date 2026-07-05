@@ -19,6 +19,17 @@ from .naming import _ILLEGAL, clean_title
 SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
 USER_AGENT = "Spurwerk/1.0"
 
+# Eingebauter API-Key (wie bei Jellyfin) — damit Endnutzer sich NICHT
+# registrieren müssen. Wird vom Verteiler EINMALIG mit einem kostenlosen
+# TMDb-v3-Key befüllt (themoviedb.org → Einstellungen → API). Bleibt er
+# leer, muss der Nutzer seinen eigenen Key eintragen oder es läuft offline.
+BUILTIN_KEY = ""
+
+
+def resolved_key(user_key: str = "") -> str:
+    """Nutzer-Key hat Vorrang, sonst der eingebaute Key."""
+    return (user_key.strip() or BUILTIN_KEY).strip()
+
 
 def search_movie(api_key: str, query: str, year: str | None = None,
                  lang: str = "de-DE", timeout: float = 8.0) -> list[dict]:

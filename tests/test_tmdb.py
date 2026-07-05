@@ -38,6 +38,18 @@ def test_ohne_key_kein_call():
     assert tmdb.search_movie("", "irgendwas") == []
 
 
+def test_resolved_key_vorrang(monkeypatch):
+    monkeypatch.setattr(tmdb, "BUILTIN_KEY", "builtin")
+    assert tmdb.resolved_key("meiner") == "meiner"   # Nutzer-Key gewinnt
+    assert tmdb.resolved_key("") == "builtin"         # sonst eingebauter
+    assert tmdb.resolved_key("  ") == "builtin"
+
+
+def test_resolved_key_leer_wenn_nichts(monkeypatch):
+    monkeypatch.setattr(tmdb, "BUILTIN_KEY", "")
+    assert tmdb.resolved_key("") == ""
+
+
 def test_netzfehler_liefert_none(monkeypatch):
     def boom(*a, **k):
         raise OSError("kein Netz")
