@@ -30,7 +30,9 @@ class AppConfig:
     user_profiles: list[RuleProfile] = field(default_factory=list)
     log_expanded: bool = False
     output_dir: str = ""                       # fester Ausgabeordner (bleibt)
-    clean_names: bool = False                  # Dateinamen bereinigen
+    clean_names: bool = False                  # Dateinamen bereinigen (offline)
+    online_names: bool = False                 # zusätzlich TMDb-Abgleich
+    tmdb_key: str = ""                         # TMDb-API-Key (v3)
     session: list[dict] = field(default_factory=list)  # offene Jobs
 
     def all_profiles(self) -> list[RuleProfile]:
@@ -63,6 +65,8 @@ def save(cfg: AppConfig) -> None:
         "log_expanded": cfg.log_expanded,
         "output_dir": cfg.output_dir,
         "clean_names": cfg.clean_names,
+        "online_names": cfg.online_names,
+        "tmdb_key": cfg.tmdb_key,
         "session": cfg.session,
         "user_profiles": [_profile_to_dict(p) for p in cfg.user_profiles],
     }
@@ -102,6 +106,8 @@ def _from_dict(data: dict) -> AppConfig:
         log_expanded=bool(data.get("log_expanded", False)),
         output_dir=data.get("output_dir", ""),
         clean_names=bool(data.get("clean_names", False)),
+        online_names=bool(data.get("online_names", False)),
+        tmdb_key=data.get("tmdb_key", ""),
         session=list(data.get("session", [])),
         user_profiles=profiles,
     )

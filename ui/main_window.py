@@ -533,7 +533,13 @@ class MainWindow(ttk.Frame):
                     dv_info = dv_analysis.analyze(ffprobe, path)
                 except dv_analysis.DVError:
                     dv_info = None   # DV-Analyse ist optional, nie blockierend
-            self.ui_q.put(("SCANNED", path, media, dv_info))
+            # TMDb-Titelabgleich (optional) — läuft schon im Scan-Thread
+            canonical = ""
+            if self.cfg.online_names and self.cfg.tmdb_key:
+                from core import tmdb
+                canonical = tmdb.canonical_name(
+                    self.cfg.tmdb_key, Path(path).name) or ""
+            self.ui_q.put(("SCANNED", path, media, dv_info, canonical))
 
     def _add_files_dialog(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -724,10 +730,13 @@ class MainWindow(ttk.Frame):
             return
         base = Path(self.profile.output.output_path_for(plan.media.path))
         stem = base.stem
-        if self.cfg.clean_names:
-            # Original-Stamm bereinigen, danach ggf. Suffix wieder anhängen
-            from core.naming import clean_filename
-            cleaned = Path(clean_filename(Path(plan.media.path).name)).stem
+        if self.cfg.clean_names or plan.canonical_name:
+            # TMDb-Titel bevorzugen, sonst Offline-Bereinigung
+            if plan.canonical_name:
+                cleaned = plan.canonical_name
+            else:
+                from core.naming import clean_filename
+                cleaned = Path(clean_filename(Path(plan.media.path).name)).stem
             suffix = self.profile.output.suffix or ""
             stem = f"{cleaned}{suffix}"
         if plan.video_mode == dv_analysis.VIDEO_MODE_HDR10:
@@ -834,6 +843,13 @@ class MainWindow(ttk.Frame):
             onvalue=True, offvalue=False,
             variable=tk.BooleanVar(value=self.cfg.clean_names),
             command=self._toggle_clean_names)
+        menu.add_checkbutton(
+            label="Titel online abgleichen (TMDb) — exakter Filmtitel",
+            onvalue=True, offvalue=False,
+            variable=tk.BooleanVar(value=self.cfg.online_names),
+            command=self._toggle_online_names)
+        menu.add_command(label="TMDb-API-Key eingeben …",
+                         command=self._edit_tmdb_key)
         menu.tk_popup(self.output_btn.winfo_rootx(),
                       self.output_btn.winfo_rooty()
                       + self.output_btn.winfo_height())
@@ -845,6 +861,43 @@ class MainWindow(ttk.Frame):
                 self._refresh_output_name(plan)
         self._refresh_all()
         self._safe_save()
+
+    def _toggle_online_names(self) -> None:
+        turning_on = not self.cfg.online_names
+        if turning_on and not self.cfg.tmdb_key and not self._edit_tmdb_key():
+            return   # ohne Key kein Online-Abgleich
+        self.cfg.online_names = turning_on
+        if turning_on:
+            self._fetch_titles_online()
+        self._safe_save()
+
+    def _edit_tmdb_key(self) -> bool:
+        from ttkbootstrap.dialogs import Querybox
+        key = Querybox.get_string(
+            prompt="TMDb-API-Key (v3) — kostenlos auf themoviedb.org unter "
+                   "Einstellungen → API:",
+            title="TMDb-API-Key", initialvalue=self.cfg.tmdb_key, parent=self)
+        if key is None:
+            return False
+        self.cfg.tmdb_key = key.strip()
+        self._safe_save()
+        return bool(self.cfg.tmdb_key)
+
+    def _fetch_titles_online(self) -> None:
+        """Für bereits geladene Dateien die TMDb-Titel im Hintergrund holen."""
+        if not (self.cfg.online_names and self.cfg.tmdb_key):
+            return
+        targets = [p.media.path for p in self.plans.values()
+                   if p is not None and not p.canonical_name]
+        for path in targets:
+            threading.Thread(target=self._title_worker, args=(path,),
+                             daemon=True).start()
+
+    def _title_worker(self, path: str) -> None:
+        from core import tmdb
+        name = tmdb.canonical_name(self.cfg.tmdb_key, Path(path).name) or ""
+        if name:
+            self.ui_q.put(("CANONICAL", path, name))
 
     def _choose_output_dir(self) -> None:
         folder = filedialog.askdirectory(title="Ausgabeordner wählen")
@@ -1050,6 +1103,7 @@ class MainWindow(ttk.Frame):
             plan.stereo = replace(self.stereo)
             plan.profile_name = self.profile.name
             plan.dv = msg[3] if len(msg) > 3 else None
+            plan.canonical_name = msg[4] if len(msg) > 4 else ""
             job = self._pending_restore.pop(path, None)
             if job is not None:
                 self.profile = self.cfg.profile(
@@ -1071,6 +1125,16 @@ class MainWindow(ttk.Frame):
                 self.file_list.select(path)
             self._refresh_all()
             self._autosize()
+        elif kind == "CANONICAL":
+            path, name = msg[1], msg[2]
+            plan = self.plans.get(path)
+            if plan is not None:
+                plan.canonical_name = name
+                self._refresh_output_name(plan)
+                self._update_file_row(path, plan)
+                if self.selected == path:
+                    self._update_preview()
+                self._safe_save()
         elif kind == "SCAN_FAILED":
             path, error = msg[1], msg[2]
             if path not in self.plans:

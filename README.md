@@ -40,7 +40,13 @@ wird mit Begründung gesperrt, statt kaputte Farben zu erzeugen.
 Ganze Serienstaffel reinziehen, Regeln einmal festlegen (oder pro Datei
 anpassen), ein Klick auf Start — Spurwerk arbeitet die Liste ab.
 Erledigte Dateien verschwinden aus der Warteschlange, Fehler bleiben
-sichtbar.
+sichtbar. Deine Warteschlange und Einstellungen bleiben beim nächsten
+Start erhalten.
+
+**🏷 Saubere Dateinamen (optional):**
+Aus `Film.2025.UHD.WEB-DL.HEVC…mkv` wird `Film (2025).mkv`. Mit einem
+kostenlosen TMDb-API-Key (themoviedb.org) sogar der exakte Filmtitel
+inkl. Schreibweise. Umschaltbar im Ausgabe-Menü.
 
 ## So startest du
 

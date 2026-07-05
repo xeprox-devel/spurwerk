@@ -174,6 +174,7 @@ class FilePlan:
     # DV/HDR-Kompatibilitäts-Remux (verlustfrei): copy | hdr10 | dv81
     video_mode: str = "copy"
     dv: "object | None" = None      # core.dv.DVInfo, nach der Analyse gesetzt
+    canonical_name: str = ""        # TMDb-Titel „Film (2025)“ (ohne Endung)
 
     # ── Abfragen ──────────────────────────────────────────────────────────
 

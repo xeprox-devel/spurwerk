@@ -16,6 +16,11 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   grün umrandeten „Ausgabe"-Button erkennbar (bis man ihn ändert).
 - **Dateinamen bereinigen** (Ausgabe-Menü, optional): macht aus
   „Film.2025.UHD.WEB-DL.HEVC…mkv" ein sauberes „Film (2025).mkv".
+- **Online-Titelabgleich (TMDb, optional)**: mit einem kostenlosen
+  TMDb-API-Key liefert Spurwerk den exakten, kanonischen Filmtitel
+  (z. B. „Obsession – Du sollst mich lieben (2025)"). Läuft im
+  Hintergrund beim Scan; ohne Key oder bei Netzfehlern greift die
+  Offline-Bereinigung. Es wird nur der Suchtitel + Jahr gesendet.
 - Modus A zeigt den PGS-Untertitel-Hinweis jetzt schon in der Vorschau
   (nicht erst während des Laufs).
 

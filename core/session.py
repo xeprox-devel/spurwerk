@@ -17,6 +17,7 @@ def serialize_plan(plan: FilePlan) -> dict:
         "path": plan.media.path,
         "profile_name": plan.profile_name,
         "video_mode": plan.video_mode,
+        "canonical_name": plan.canonical_name,
         "output_path": plan.output_path,
         "output_manual": plan.output_manual,
         "stereo": asdict(plan.stereo),
@@ -47,6 +48,7 @@ def restore_plan(plan: FilePlan, job: dict) -> None:
                 plan.set_action(tid, Action(action), Origin.MANUAL)
 
         plan.video_mode = job.get("video_mode", "copy")
+        plan.canonical_name = job.get("canonical_name", "")
 
         src = job.get("default_audio_source")
         if src is not None and any(t.id == src
