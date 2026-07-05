@@ -44,6 +44,11 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   (MKV, verlustfrei) oder **DV → 8.1 (MP4)**.
 
 ### Behoben
+- **DV-Remux-Ausgabe lief auf manchen Hardware-Playern (Rockchip/ARM-Boxen
+  wie ROCK64) nicht**, obwohl der Stream valide war und auf PC-Playern
+  (VLC) lief. Die HEVC-Extraktion nutzt jetzt **mkvextract** (der native
+  MKVToolNix-Round-Trip bewahrt die exakte Stream-Struktur) statt ffmpegs
+  umgeschriebenem Bitstream; ffmpeg bleibt Fallback, falls mkvextract fehlt.
 - **DV → 8.1 (MP4) scheiterte, wenn nach der Modus-Wahl noch das Profil
   gewechselt, „Auf alle Dateien" geklickt oder der Ausgabeordner geändert
   wurde**: Der Ausgabepfad fiel dann auf `.mkv` zurück, und der MP4-Mux

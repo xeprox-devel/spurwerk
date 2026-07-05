@@ -121,8 +121,18 @@ def parse_stream(stream: dict) -> DVInfo:
 # ── Pipeline-Kommandos (reine Builder, vom Runner ausgeführt) ────────────
 
 
+def build_extract_hevc_mkvextract(mkvextract: str, src: str, track_id: int,
+                                  out_hevc: str) -> list[str]:
+    """HEVC bitgenau via mkvextract ziehen — der native MKVToolNix-Round-Trip
+    (mkvextract → mkvmerge) bewahrt die exakte NAL-/Parameter-Set-Struktur.
+    Genau das brauchen wählerische Hardware-Decoder (Rockchip/ARM-Boxen),
+    denen ffmpegs umgeschriebener Bitstream nicht schmeckt."""
+    return [mkvextract, "tracks", src, "--gui-mode",
+            f"{track_id}:{out_hevc}"]
+
+
 def build_extract_hevc(ffmpeg: str, src: str, out_hevc: str) -> list[str]:
-    """HEVC-Stream bitgenau aus dem Container ziehen (Annex-B, RPUs bleiben)."""
+    """Fallback-Extraktion via ffmpeg (Annex-B), falls mkvextract fehlt."""
     return [ffmpeg, "-y", "-v", "error", "-i", src,
             "-map", "0:v:0", "-c:v", "copy",
             "-bsf:v", "hevc_mp4toannexb", "-f", "hevc",

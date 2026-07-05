@@ -212,12 +212,26 @@ class JobRunner:
         raw = str(Path(temp_dir) / "video_dv.hevc")
         out = str(Path(temp_dir) / "video_out.hevc")
 
-        self.q.put(("LOG", f"  [1/{steps}] Extrahiere HEVC-Stream "
-                           f"(bitgenau, kein Encoding) …", "step"))
-        self._run_ffmpeg(
-            dv.build_extract_hevc(self.tools["ffmpeg"],
-                                  plan.media.path, raw),
-            plan.media.duration_s, slice_start=0, slice_end=100 // steps)
+        # mkvextract (liegt neben mkvmerge) bevorzugen — bewahrt die exakte
+        # Stream-Struktur für wählerische Hardware-Decoder; ffmpeg als Fallback
+        mkvextract = str(Path(self.tools["mkvmerge"]).with_name(
+            "mkvextract.exe"))
+        video_tracks = plan.media.by_type("video")
+        end = 100 // steps
+        if Path(mkvextract).exists() and video_tracks:
+            self.q.put(("LOG", f"  [1/{steps}] Extrahiere HEVC-Stream via "
+                               f"mkvextract (bitgenau) …", "step"))
+            self._run_mkvmerge(
+                dv.build_extract_hevc_mkvextract(
+                    mkvextract, plan.media.path, video_tracks[0].id, raw),
+                slice_start=0, slice_end=end, tool="mkvextract")
+        else:
+            self.q.put(("LOG", f"  [1/{steps}] Extrahiere HEVC-Stream "
+                               f"(bitgenau, kein Encoding) …", "step"))
+            self._run_ffmpeg(
+                dv.build_extract_hevc(self.tools["ffmpeg"],
+                                      plan.media.path, raw),
+                plan.media.duration_s, slice_start=0, slice_end=end)
         self._check_cancel()
 
         info = plan.dv
@@ -302,8 +316,10 @@ class JobRunner:
         frac = min(1.0, elapsed_us / (duration_s * 1_000_000))
         self.q.put(("PROGRESS_FILE", start + int(frac * (end - start))))
 
-    def _run_mkvmerge(self, cmd: list[str],
-                      slice_start: int, slice_end: int) -> None:
+    def _run_mkvmerge(self, cmd: list[str], slice_start: int, slice_end: int,
+                      tool: str = "mkvmerge") -> None:
+        """Für mkvmerge UND mkvextract — beide melden #GUI#progress und
+        nutzen 0=ok, 1=Warnung, >=2=Fehler."""
         def on_line(line: str) -> None:
             m = _GUI_PROGRESS_RE.search(line)
             if m:
@@ -316,12 +332,10 @@ class JobRunner:
             return
         if returncode == 1:
             self.q.put(("LOG",
-                        f"  mkvmerge-Warnung: {stderr[-300:].strip()}",
-                        "info"))
+                        f"  {tool}-Warnung: {stderr[-300:].strip()}", "info"))
         elif returncode != 0:   # >=2 = Fehler, negativ = per Signal beendet
             raise JobError(
-                f"mkvmerge-Fehler (Exit {returncode}): "
-                f"{stderr[-600:].strip()}")
+                f"{tool}-Fehler (Exit {returncode}): {stderr[-600:].strip()}")
 
     def _stream_process(self, cmd: list[str], progress_cb) -> tuple[int, str]:
         """Startet den Prozess, streamt stdout an progress_cb und liefert
