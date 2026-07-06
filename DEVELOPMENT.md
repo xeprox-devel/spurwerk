@@ -21,8 +21,9 @@ python assets/make_icon.py         # spurwerk.ico neu rendern
 ```
 
 Die Fixtures decken ab: Sprachvarianten, 5.1/7.1, DTS, Audio-Delay
-(A/V-Sync), `und`-Sprache, ohne-Deutsch, zwei deutsche Spuren sowie ein
-synthetisches Dolby-Vision-8.1-File (dovi_tool generate + inject-rpu).
+(A/V-Sync), `und`-Sprache, ohne-Deutsch, zwei deutsche Spuren und ein
+synthetisches Dolby-Vision-8.1-File (dovi_tool generate + inject-rpu)
+für den „DV/HDR → HDR10"-End-to-End-Test.
 
 ## Architektur
 

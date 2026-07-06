@@ -14,6 +14,8 @@ import json
 import urllib.request
 from dataclasses import dataclass
 
+from version import USER_AGENT
+
 REPO = "xeprox-devel/spurwerk"
 _API = "https://api.github.com/repos/{repo}/releases/latest"
 _RELEASES = "https://github.com/{repo}/releases/latest"
@@ -21,12 +23,12 @@ _RELEASES = "https://github.com/{repo}/releases/latest"
 
 @dataclass(frozen=True)
 class UpdateInfo:
-    latest: str    # Anzeigeversion ohne führendes „v", z. B. „1.1.0"
+    latest: str    # Anzeigeversion ohne führendes „v“, z. B. „1.1.0“
     url: str       # Release-Seite zum Öffnen
 
 
 def parse_version(text: str) -> tuple[int, ...]:
-    """„v1.2.3" / „1.2.3-beta" → (1, 2, 3). Führendes „v" fällt weg, ab dem
+    """„v1.2.3“ / „1.2.3-beta“ → (1, 2, 3). Führendes „v“ fällt weg, ab dem
     ersten nicht-numerischen Teil wird abgebrochen. Unbrauchbares ergibt ()."""
     parts: list[int] = []
     for chunk in text.strip().lstrip("vV").split("."):
@@ -59,7 +61,7 @@ def check_latest(current: str, repo: str = REPO,
         req = urllib.request.Request(
             _API.format(repo=repo),
             headers={"Accept": "application/vnd.github+json",
-                     "User-Agent": f"Spurwerk/{current}"})
+                     "User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", "ignore"))
     except Exception:

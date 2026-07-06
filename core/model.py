@@ -15,8 +15,8 @@ class Action(Enum):
     """Was mit einer Spur in der Ausgabe passiert."""
 
     COPY = "copy"                      # verlustfrei übernehmen
-    STEREO_ADD = "stereo_add"          # Original behalten + Stereo-Kopie zusätzlich
-    STEREO_REPLACE = "stereo_replace"  # nur die Stereo-Version übernehmen
+    STEREO_ADD = "stereo_add"          # Original behalten + konvertierte Kopie zusätzlich
+    STEREO_REPLACE = "stereo_replace"  # nur die konvertierte Version übernehmen
     DROP = "drop"                      # Spur fällt weg
 
     @property
@@ -90,14 +90,6 @@ class MediaInfo:
                 return i
         raise KeyError(f"Track {track_id} ist keine Audiospur")
 
-    def ffmpeg_sub_index(self, track_id: int) -> int:
-        """Index der Spur unter den Untertiteln (für ffmpeg `-map 0:s:N`)."""
-        for i, t in enumerate(self.by_type("subtitles")):
-            if t.id == track_id:
-                return i
-        raise KeyError(f"Track {track_id} ist keine Untertitelspur")
-
-
 @dataclass
 class TrackDecision:
     action: Action
@@ -143,9 +135,6 @@ class OutputSettings:
 
 
 class FileStatus(Enum):
-    PENDING_TOOLS = "wartet auf Tools"
-    SCANNING = "scanne"
-    SCAN_ERROR = "Scan-Fehler"
     READY = "bereit"
     WAITING = "wartet"
     RUNNING = "läuft"
@@ -163,7 +152,7 @@ class FilePlan:
     warnings: list[str] = field(default_factory=list)
     # Genau EINE Standard-Audiospur in der Ausgabe (Invariante):
     default_audio_source: int | None = None   # Quell-Track-ID
-    default_audio_is_stereo: bool = False     # Flag liegt auf der Stereo-Kopie
+    default_audio_is_stereo: bool = False     # Flag liegt auf der konvertierten Kopie
     output_path: str = ""
     output_manual: bool = False               # Nutzer hat den Pfad selbst gesetzt
     status: FileStatus = FileStatus.READY
@@ -171,7 +160,7 @@ class FilePlan:
     # Job-Queue-Prinzip: JEDE Datei trägt ihre eigene Konvertierungs-Config
     stereo: StereoSettings = field(default_factory=StereoSettings)
     profile_name: str = ""
-    # DV/HDR-Kompatibilitäts-Remux (verlustfrei): copy | hdr10 | dv81
+    # DV/HDR-Kompatibilitäts-Remux (verlustfrei): copy | hdr10
     video_mode: str = "copy"
     dv: "object | None" = None      # core.dv.DVInfo, nach der Analyse gesetzt
     canonical_name: str = ""        # TMDb-Titel „Film (2025)“ (ohne Endung)
@@ -187,7 +176,7 @@ class FilePlan:
                 if self.decisions[t.id].action.keeps_original]
 
     def stereo_sources(self) -> list[Track]:
-        """Audiospuren, aus denen eine Stereo-Version erzeugt wird."""
+        """Audiospuren, aus denen eine konvertierte Version erzeugt wird."""
         return [t for t in self.media.audio_tracks
                 if self.decisions[t.id].action.is_stereo]
 
@@ -211,14 +200,14 @@ class FilePlan:
                    origin: Origin = Origin.MANUAL) -> None:
         track = self.media.track(track_id)
         if action.is_stereo and track.type != "audio":
-            raise ValueError("Stereo-Aktionen gibt es nur für Audiospuren")
+            raise ValueError("Konvertier-Aktionen gibt es nur für Audiospuren")
         self.decisions[track_id] = TrackDecision(action, origin)
         self._ensure_default_valid()
 
     def set_default_audio(self, track_id: int, on_stereo: bool) -> None:
         dec = self.decisions[track_id]
         if on_stereo and not dec.action.is_stereo:
-            raise ValueError("Spur hat keine Stereo-Aktion")
+            raise ValueError("Spur hat keine Konvertier-Aktion")
         if not on_stereo and not dec.action.keeps_original:
             raise ValueError("Original dieser Spur ist nicht in der Ausgabe")
         self.default_audio_source = track_id

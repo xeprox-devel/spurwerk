@@ -22,9 +22,15 @@ try:
 except ImportError:  # ältere 1.x
     from ttkbootstrap.toast import ToastNotification
 
+try:
+    from ttkbootstrap.widgets import ToolTip
+except ImportError:  # ältere 1.x
+    from ttkbootstrap.tooltip import ToolTip
+
 import config as appconfig
 from core import dv as dv_analysis
 from core import tools as toolchain
+from core.commands import subtitle_automation_note
 from core.langs import display_name
 from core.model import FilePlan, FileStatus, RuleProfile
 from core.planner import build_plan, reapply_rules, reset_manual
@@ -41,14 +47,26 @@ from .track_table import TrackTable
 _STATUS_TAGS = {
     FileStatus.DONE: "done", FileStatus.ERROR: "error",
     FileStatus.RUNNING: "running", FileStatus.SKIPPED: "dim",
-    FileStatus.SCANNING: "dim", FileStatus.SCAN_ERROR: "error",
 }
 
 
+def n_text(n: int, singular: str, plural: str) -> str:
+    """Echte Pluralform statt Klammer-Plural: n_text(3, "Datei", "Dateien")."""
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def _tip(widget, text: str) -> None:
+    """Dezenter Tooltip im App-Look (dunkle Fläche, heller Text)."""
+    ToolTip(widget, text=text, bootstyle="inverse-dark", delay=450,
+            wraplength=340)
+
+
 class MainWindow(ttk.Frame):
-    def __init__(self, master, cfg: appconfig.AppConfig):
+    def __init__(self, master, cfg: appconfig.AppConfig,
+                 dnd_ok: bool = True):
         super().__init__(master, padding=(12, 8))
         self.cfg = cfg
+        self._dnd_ok = dnd_ok   # Drag&Drop verfügbar? (tkinterdnd2 geladen)
         self.profile: RuleProfile = cfg.profile(cfg.active_profile)
         self.stereo = replace(self.profile.stereo)
 
@@ -105,26 +123,33 @@ class MainWindow(ttk.Frame):
         chips.grid(row=0, column=2, sticky="e")
         self._dot_ok = theme.make_status_dot(self, theme.COLORS["success"])
         self._dot_bad = theme.make_status_dot(self, theme.COLORS["danger"])
+        # neutraler Punkt für „noch ungeprüft“ — Rot erst bei echtem Befund
+        self._dot_wait = theme.make_status_dot(self, theme.MUTED)
         self.tool_chips: dict[str, ttk.Label] = {}
         for name in toolchain.REQUIRED:
-            chip = ttk.Label(chips, text=f" {name}: prüfe …",
-                             image=self._dot_bad, compound="left",
+            chip = ttk.Label(chips, text=f" {name} wird geprüft …",
+                             image=self._dot_wait, compound="left",
                              cursor="hand2")
             chip.pack(side="left", padx=(0, 12))
             chip.bind("<Button-1>", lambda _e: self._open_tool_manager())
             self.tool_chips[name] = chip
 
         # Update-Hinweis — bleibt leer/unsichtbar, bis eine neuere Version
-        # gefunden wird (siehe _handle_message „UPDATE").
+        # gefunden wird (siehe _handle_message „UPDATE“); Akzent-Cyan wie
+        # alle Hinweise (Grün bleibt „fertig/behalten“).
         self.update_chip = ttk.Label(chips, text="", cursor="hand2",
-                                     foreground=theme.COLORS["success"],
+                                     foreground=theme.COLORS["info"],
                                      font=("Segoe UI", 9, "bold"))
         self._info_btn = ttk.Button(chips, text="ⓘ", width=3,
                                     bootstyle="secondary-outline",
                                     command=self._open_about)
         self._info_btn.pack(side="left", padx=(0, 6))
-        ttk.Button(chips, text="⚙", width=3, bootstyle="secondary-outline",
-                   command=self._open_tool_manager).pack(side="left")
+        _tip(self._info_btn, "Über Spurwerk")
+        gear_btn = ttk.Button(chips, text="⚙", width=3,
+                              bootstyle="secondary-outline",
+                              command=self._open_tool_manager)
+        gear_btn.pack(side="left")
+        _tip(gear_btn, "Werkzeuge einrichten")
 
     def _open_about(self) -> None:
         from .about import AboutDialog
@@ -149,10 +174,18 @@ class MainWindow(ttk.Frame):
         zone = ttk.Frame(self.empty, padding=40, bootstyle="dark")
         zone.grid(row=1, column=0, sticky="ew", pady=(8, 4))
         zone.columnconfigure(0, weight=1)
-        ttk.Label(zone, text="MKV-Dateien hierher ziehen",
+        # Kein Versprechen, das die App nicht halten kann: ohne tkinterdnd2
+        # wirbt der Leerzustand nicht für Drag&Drop.
+        if self._dnd_ok:
+            head_text = "MKV-Dateien hierher ziehen"
+            sub_text = "oder über die Buttons öffnen"
+        else:
+            head_text = "MKV-Dateien über die Buttons öffnen"
+            sub_text = "(Drag&Drop nicht verfügbar)"
+        ttk.Label(zone, text=head_text,
                   font=("Segoe UI", 14, "bold"), bootstyle="inverse-dark",
                   anchor="center").grid(row=0, column=0, pady=(8, 2))
-        ttk.Label(zone, text="oder über die Buttons öffnen",
+        ttk.Label(zone, text=sub_text,
                   bootstyle="inverse-dark", foreground=theme.MUTED,
                   anchor="center").grid(row=1, column=0, pady=(0, 14))
         buttons = ttk.Frame(zone, bootstyle="dark")
@@ -183,20 +216,29 @@ class MainWindow(ttk.Frame):
 
         fbtn = ttk.Frame(files_head)
         fbtn.grid(row=0, column=2, sticky="e")
-        for text, cmd, style, lockable in [
-                ("+ Dateien", self._add_files_dialog, "primary-outline", False),
-                ("+ Ordner", self._add_folder_dialog, "primary-outline", False),
-                ("− Entfernen", self._remove_selected, "secondary-outline", True),
-                ("Leeren", self._clear_files, "secondary-outline", True)]:
+        for text, cmd, style, lockable, tip in [
+                ("+ Dateien …", self._add_files_dialog, "primary-outline",
+                 False, "MKV-Dateien hinzufügen (Strg+O)"),
+                ("+ Ordner …", self._add_folder_dialog, "primary-outline",
+                 False, "Alle MKVs eines Ordners hinzufügen "
+                        "(Strg+Umschalt+O)"),
+                ("− Entfernen", self._remove_selected, "secondary-outline",
+                 True, "Markierte Datei aus der Liste entfernen (Entf)"),
+                ("Leeren", self._clear_files, "secondary-outline",
+                 True, None)]:
             btn = ttk.Button(fbtn, text=text, bootstyle=style, command=cmd)
             btn.pack(side="left", padx=(6, 0))
             if lockable:
                 self._lock_buttons.append(btn)
+            if tip:
+                _tip(btn, tip)
         self.output_btn = ttk.Button(fbtn, text="Ausgabe: Quellordner  ▾",
-                                     bootstyle="secondary-outline",
+                                     bootstyle="primary-outline",
                                      command=self._output_menu)
         self.output_btn.pack(side="left", padx=(18, 0))
         self._lock_buttons.append(self.output_btn)
+        _tip(self.output_btn, "Ausgabeziel wählen: Quellordner oder fester "
+                              "Ordner — plus Optionen für den Dateinamen.")
 
         self.file_list = FileList(self.work, on_select=self._on_file_selected)
         self.file_list.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
@@ -214,6 +256,9 @@ class MainWindow(ttk.Frame):
         self.profile_cb.grid(row=0, column=1)
         self.profile_cb.bind("<<ComboboxSelected>>", self._on_profile_changed)
         self._lock_combos.append(self.profile_cb)
+        _tip(self.profile_cb, "Gilt für die markierte Datei — „Auf alle Dateien“ "
+                              "überträgt Profil + Einstellungen "
+                              "auf die ganze Liste.")
         edit_btn = ttk.Button(rules, text="Bearbeiten …",
                               bootstyle="secondary-outline",
                               command=self._edit_rules)
@@ -224,6 +269,9 @@ class MainWindow(ttk.Frame):
                                    command=self._apply_to_all)
         apply_all_btn.grid(row=0, column=4, padx=(6, 0))
         self._lock_buttons.append(apply_all_btn)
+        _tip(apply_all_btn, "Überträgt das aktuelle Profil samt "
+                            "Konvertierungs-Einstellungen auf alle Dateien — "
+                            "manuelle Spur-Änderungen bleiben erhalten.")
         self.rule_label = ttk.Label(rules, foreground=theme.MUTED)
         self.rule_label.grid(row=0, column=2, sticky="w", padx=(14, 0))
 
@@ -242,24 +290,38 @@ class MainWindow(ttk.Frame):
         self.tracks_label.grid(row=0, column=0, sticky="w")
         tbtn = ttk.Frame(head)
         tbtn.grid(row=0, column=1, sticky="e")
-        for text, cmd in [
-                ("Alle an", lambda: self.track_table.set_all(True)),
-                ("Alle aus", lambda: self.track_table.set_all(False)),
-                ("↺ Regel", self._reset_selected_to_rule)]:
+        for text, cmd, tip in [
+                ("Alle an", lambda: self.track_table.set_all(True), None),
+                ("Alle aus", lambda: self.track_table.set_all(False), None),
+                ("↺ Regel", self._reset_selected_to_rule,
+                 "Manuelle Änderungen der markierten Datei auf die "
+                 "Profil-Regel zurücksetzen")]:
             btn = ttk.Button(tbtn, text=text, bootstyle="secondary-outline",
                              command=cmd)
             btn.pack(side="left", padx=(6, 0))
             self._lock_buttons.append(btn)
+            if tip:
+                _tip(btn, tip)
 
         self.track_table = TrackTable(tracks_frame,
                                       on_change=self._on_plan_edited)
         self.track_table.grid(row=1, column=0, sticky="nsew", pady=(4, 2))
 
+        # Legende für die Zeichen-Codes der Spurtabelle (Nachtcyan-Semantik)
+        ttk.Label(
+            tracks_frame,
+            text="✓ grün = verlustfrei behalten · ✓ cyan = neu erzeugt/"
+                 "konvertiert · ▾ = Klick öffnet Aktionen · "
+                 "★ = Standard-Audiospur · Q: R = Regel, M = manuell",
+            foreground=theme.MUTED, font=("Segoe UI", 9)
+        ).grid(row=2, column=0, sticky="w", pady=(0, 4))
+
         self.preview_label = ttk.Label(tracks_frame, foreground=theme.MUTED)
-        self.preview_label.grid(row=2, column=0, sticky="w", pady=(0, 2))
+        self.preview_label.grid(row=3, column=0, sticky="w", pady=(0, 2))
         self.warn_label = ttk.Label(tracks_frame,
-                                    foreground=theme.COLORS["warning"])
-        self.warn_label.grid(row=3, column=0, sticky="w")
+                                    foreground=theme.COLORS["warning"],
+                                    wraplength=920, justify="left")
+        self.warn_label.grid(row=4, column=0, sticky="w")
 
         # ── Konvertierungs-Panel (nur sichtbar, wenn relevant) ──────────
         self.stereo_panel = ttk.Labelframe(
@@ -271,7 +333,7 @@ class MainWindow(ttk.Frame):
         startbar = ttk.Frame(self.work)
         startbar.grid(row=5, column=0, sticky="ew", pady=(12, 6))
         startbar.columnconfigure(0, weight=1)
-        self.start_btn = ttk.Button(startbar, text="▶  Start",
+        self.start_btn = ttk.Button(startbar, text="▶  Start (F5)",
                                     bootstyle="primary",
                                     command=self._start)
         self.start_btn.grid(row=0, column=0, sticky="ew", ipady=4)
@@ -284,12 +346,14 @@ class MainWindow(ttk.Frame):
         progress.grid(row=6, column=0, sticky="ew")
         progress.columnconfigure(0, weight=3)
         progress.columnconfigure(1, weight=2)
+        # Beide Gauges Cyan — ein Fortschritts-Look für Datei und Gesamt
+        # (Nutzerentscheid); Grün bleibt Ergebnissen vorbehalten.
         self.gauge_file = Floodgauge(progress, mask="Datei  {}%",
                                      bootstyle="primary", value=0,
                                      font=("Segoe UI", 9))
         self.gauge_file.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         self.gauge_total = Floodgauge(progress, mask="Gesamt  {}%",
-                                      bootstyle="success", value=0,
+                                      bootstyle="primary", value=0,
                                       font=("Segoe UI", 9))
         self.gauge_total.grid(row=0, column=1, sticky="ew")
         self.status_label = ttk.Label(progress, foreground=theme.MUTED)
@@ -333,6 +397,8 @@ class MainWindow(ttk.Frame):
         self.preset_cb.set(DOWNMIX_PRESETS[self.stereo.downmix_preset]["label"])
         self.preset_cb.pack(side="left", padx=(6, 0))
         self.preset_cb.bind("<<ComboboxSelected>>", self._on_stereo_changed)
+        _tip(self.preset_cb, "Klangprofil für den Downmix — wirkt nur beim "
+                             "Ziel 2.0, Details zeigt der Hinweis unten.")
 
         row2 = ttk.Frame(panel)
         row2.pack(fill="x", pady=(6, 2))
@@ -346,7 +412,7 @@ class MainWindow(ttk.Frame):
         self.stereo_default_var = ttk.BooleanVar(
             value=self.profile.stereo_make_default)
         default_cb = ttk.Checkbutton(
-            row2, text="Neue Stereospur als Standard-Audiospur",
+            row2, text="Neue Spur als Standard-Audiospur",
             variable=self.stereo_default_var, bootstyle="primary",
             command=self._on_stereo_default_toggled)
         default_cb.pack(side="left")
@@ -389,7 +455,7 @@ class MainWindow(ttk.Frame):
 
     def _refresh_all(self) -> None:
         """Nach Profil-/Planänderungen: alles Abgeleitete neu zeichnen."""
-        self.rule_label.configure(text="» " + describe(self.profile) + " «")
+        self.rule_label.configure(text=describe(self.profile))
         self.files_label.configure(text=f"DATEIEN ({len(self.plans)})")
         for path, plan in self.plans.items():
             if plan is not None:
@@ -428,9 +494,7 @@ class MainWindow(ttk.Frame):
         counts = plan.output_track_count
         video_part = f"{counts['video']}× Video"
         if plan.video_mode == dv_analysis.VIDEO_MODE_HDR10:
-            video_part += " (DV entfernt → HDR10, verlustfrei)"
-        elif plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
-            video_part += " (DV → Profil 8.1)"
+            video_part += " (DV/HDR → HDR10, verlustfrei)"
         elif plan.dv is not None and plan.dv.describe():
             video_part += f" ({plan.dv.describe()})"
         parts = [video_part]
@@ -441,26 +505,17 @@ class MainWindow(ttk.Frame):
             audio_part += (f" (NEU: {langs} {plan.stereo.short_label()} "
                            f"{plan.stereo.bitrate})")
         parts.append(audio_part)
-        # Untertitel — bei MP4 (DV→8.1) fallen Bild-Untertitel (PGS) weg
-        sub_note = ""
-        if plan.video_mode == dv_analysis.VIDEO_MODE_DV81:
-            kept_subs = [plan.media.track(i) for i in plan.kept_ids("subtitles")]
-            dropped = [t for t in kept_subs
-                       if not dv_analysis.mp4_sub_compatible(t.codec_id)]
-            usable = len(kept_subs) - len(dropped)
-            parts.append(f"{usable}× Untertitel (MP4)")
-            if dropped:
-                sub_note = (f"MP4 kann {len(dropped)} Bild-Untertitel "
-                            f"(PGS) nicht — nur Text bleibt. "
-                            f"MKV-Modus behält alle.")
-        else:
-            parts.append(f"{counts['subtitles']}× Untertitel")
+        parts.append(f"{counts['subtitles']}× Untertitel")
         if plan.media.has_chapters:
             parts.append("Kapitel ✓")
+        # Bei festem Ausgabeordner den kompletten Zielpfad zeigen —
+        # im Quellordner-Modus genügt der Name (Ziel = neben der Quelle).
+        target = Path(plan.output_path)
         self.preview_label.configure(
             text="Ausgabe: " + " · ".join(parts)
-                 + f"   →   {Path(plan.output_path).name}")
+                 + f"   →   {target if self.output_dir else target.name}")
         notes = list(plan.warnings)
+        sub_note = subtitle_automation_note(plan)
         if sub_note:
             notes.append(sub_note)
         self.warn_label.configure(
@@ -475,7 +530,8 @@ class MainWindow(ttk.Frame):
             count = len(plan.stereo_sources())
             self.stereo_panel.configure(
                 text=f" Audio-Konvertierung · {Path(plan.media.path).name} "
-                     f"— wirkt auf {count} Spur(en) dieser Datei ")
+                     f"— wirkt auf {n_text(count, 'Spur', 'Spuren')} "
+                     f"dieser Datei ")
         if any_stereo and not visible:
             self.stereo_panel.grid(row=4, column=0, sticky="ew", pady=(10, 0))
             self._autosize()
@@ -490,16 +546,16 @@ class MainWindow(ttk.Frame):
         stereo = sum(len(p.stereo_sources()) for p in ready if p)
         n = len(ready)
         if n == 0:
-            self.start_btn.configure(text="▶  Start", state="disabled")
+            self.start_btn.configure(text="▶  Start (F5)", state="disabled")
             return
-        text = f"▶  Start — {n} Datei{'en' if n != 1 else ''}"
-        text += f" · {lossless} Spuren verlustfrei"
+        text = f"▶  Start (F5) — {n_text(n, 'Datei', 'Dateien')}"
+        text += f" · {n_text(lossless, 'Spur', 'Spuren')} verlustfrei"
         if stereo:
             labels = {p.stereo.short_label() for p in ready
                       if p.stereo_sources()}
             target = (f" → {labels.pop()}" if len(labels) == 1
                       else " (Ziel je Datei)")
-            text += (f" · {stereo} Konvertierung{'en' if stereo != 1 else ''}"
+            text += (f" · {n_text(stereo, 'Konvertierung', 'Konvertierungen')}"
                      f"{target}")
         self.start_btn.configure(
             text=text, state="disabled" if self._running else "normal")
@@ -532,7 +588,8 @@ class MainWindow(ttk.Frame):
                              daemon=True).start()
         self._sync_state()
         self._refresh_all()
-        self.log.log(f"{len(added)} Datei(en) hinzugefügt.", "info")
+        self.log.log(f"{n_text(len(added), 'Datei', 'Dateien')} hinzugefügt.",
+                     "info")
         self._safe_save()
 
     def _scan_worker(self, path: str) -> None:
@@ -564,14 +621,23 @@ class MainWindow(ttk.Frame):
 
     def _bind_shortcuts(self) -> None:
         """Tastenkürzel wie bei Profi-Werkzeugen. Global auf dem Fenster:
-        F5 = Start, Strg+O = Dateien, Strg+Umschalt+O = Ordner. „Entf" nur
+        F5 = Start, Strg+O = Dateien, Strg+Umschalt+O = Ordner. „Entf“ nur
         auf der Dateiliste, damit Textfelder ungestört bleiben."""
         top = self.winfo_toplevel()
         top.bind("<F5>", lambda _e: self._start())
-        top.bind("<Control-o>", lambda _e: self._add_files_dialog())
-        top.bind("<Control-O>", lambda _e: self._add_folder_dialog())
+        # Beide Keysym-Varianten auf EINEN Handler: bei aktivem Caps Lock
+        # liefert Strg+O das Keysym „O“ — entscheidend ist allein der
+        # Umschalt-Zustand des Events, sonst landet man im falschen Dialog.
+        top.bind("<Control-o>", self._on_ctrl_o)
+        top.bind("<Control-O>", self._on_ctrl_o)
         self.file_list.tree.bind("<Delete>",
                                  lambda _e: self._remove_selected())
+
+    def _on_ctrl_o(self, event) -> None:
+        if event.state & 0x0001:   # Umschalt-Taste gedrückt
+            self._add_folder_dialog()
+        else:
+            self._add_files_dialog()
 
     def _add_files_dialog(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -631,6 +697,12 @@ class MainWindow(ttk.Frame):
         self.codec_cb.set(OUTPUT_CODECS[self.stereo.codec]["label"])
         self.preset_cb.set(DOWNMIX_PRESETS[self.stereo.downmix_preset]["label"])
         self.trackname_var.set(self.stereo.track_name)
+        # Auch die Standard-Checkbox spiegelt die MARKIERTE Datei — sonst
+        # zeigt sie nach einem Dateiwechsel den Zustand der vorherigen.
+        plan = self._selected_plan()
+        self.stereo_default_var.set(
+            plan.default_audio_is_stereo if plan is not None
+            else self.profile.stereo_make_default)
         self._last_suggested = self.stereo.suggested_track_name()
         self._refresh_channels()
         self._refresh_bitrates()
@@ -641,7 +713,6 @@ class MainWindow(ttk.Frame):
         self.track_table.convert_label = self.stereo.short_label()
 
     def _file_context_menu(self, event) -> None:
-        import os
         import tkinter as tk
         path = self.file_list.tree.identify_row(event.y)
         if not path:
@@ -649,20 +720,35 @@ class MainWindow(ttk.Frame):
         self.file_list.select(path)
         plan = self.plans.get(path)
         menu = tk.Menu(self, tearoff=0)
+        # Während eines Laufs sind Plan-Änderungen gesperrt (der Runner
+        # arbeitet auf Snapshots — eine Änderung würde still ignoriert).
+        lock = "disabled" if self._running else "normal"
         if plan is not None:
-            menu.add_command(label="Ausgabename/-ort ändern …",
+            menu.add_command(label="Ausgabename/-ort ändern …", state=lock,
                              command=lambda: self._change_output(plan))
             menu.add_command(
                 label="Ausgabeordner öffnen",
-                command=lambda: os.startfile(Path(plan.output_path).parent))
+                command=lambda: self._open_folder(
+                    Path(plan.output_path).parent))
         menu.add_command(label="Quellordner öffnen",
-                         command=lambda: os.startfile(Path(path).parent))
+                         command=lambda: self._open_folder(Path(path).parent))
         menu.add_separator()
-        menu.add_command(label="Aus der Liste entfernen",
+        menu.add_command(label="Aus der Liste entfernen", state=lock,
                          command=self._remove_selected)
         menu.tk_popup(event.x_root, event.y_root)
 
+    def _open_folder(self, folder: Path) -> None:
+        """Ordner im Explorer öffnen — ein gelöschter Ordner ist ein
+        Protokoll-Eintrag, kein Absturz."""
+        import os
+        try:
+            os.startfile(folder)
+        except OSError as exc:
+            self.log.log(f"Ordner lässt sich nicht öffnen: {exc}", "error")
+
     def _change_output(self, plan: FilePlan) -> None:
+        if self._running:
+            return
         current = Path(plan.output_path)
         chosen = filedialog.asksaveasfilename(
             parent=self, title="Ausgabedatei wählen",
@@ -690,7 +776,7 @@ class MainWindow(ttk.Frame):
             plan.stereo = replace(self.profile.stereo)
             self.stereo = plan.stereo
             reapply_rules(plan, self.profile)
-            self._refresh_output_name(plan)   # DV-Endung (.mp4/.mkv) erhalten
+            self._refresh_output_name(plan)   # Name an neue Vorgaben anpassen
         else:
             self.stereo = replace(self.profile.stereo)
 
@@ -707,7 +793,7 @@ class MainWindow(ttk.Frame):
             plan.profile_name = self.profile.name
             plan.stereo = replace(self.stereo)
             reapply_rules(plan, self.profile)
-            self._refresh_output_name(plan)   # DV-Endung (.mp4/.mkv) erhalten
+            self._refresh_output_name(plan)   # Name an neue Vorgaben anpassen
         selected = self._selected_plan()
         if selected is not None:
             self.stereo = selected.stereo
@@ -757,12 +843,13 @@ class MainWindow(ttk.Frame):
             self._refresh_all()
 
     def _refresh_output_name(self, plan: FilePlan) -> None:
-        """Dateiname folgt Bereinigungs-Option; der Video-Modus bestimmt nur
-        die Endung (DV → Profil 8.1 = .mp4, sonst .mkv). Kein Klammer-Suffix
-        wie „[HDR10]“ mehr — der saubere Titel bleibt sauber."""
+        """Dateiname folgt der Bereinigungs-Option; die Endung ist immer
+        „.mkv“ (die Quell-Endung — Spurwerk nimmt nur MKVs an und gibt nur
+        MKVs aus). Kein Klammer-Suffix wie „[HDR10]“ — der saubere Titel
+        bleibt sauber, der Video-Modus steht nur in der Vorschau."""
         if plan.output_manual:
             return
-        from core.naming import clean_filename, output_filename
+        from core.naming import clean_filename
         base = Path(self.profile.output.output_path_for(plan.media.path))
         stem = base.stem
         if self.cfg.clean_names or plan.canonical_name:
@@ -773,9 +860,7 @@ class MainWindow(ttk.Frame):
                 stem = plan.canonical_name
             else:
                 stem = Path(clean_filename(Path(plan.media.path).name)).stem
-        to_mp4 = plan.video_mode == dv_analysis.VIDEO_MODE_DV81
-        name = output_filename(stem, base.suffix, to_mp4)
-        plan.output_path = str(base.with_name(name))
+        plan.output_path = str(base.with_name(stem + base.suffix))
 
     def _on_plan_edited(self) -> None:
         plan = self._selected_plan()
@@ -868,15 +953,22 @@ class MainWindow(ttk.Frame):
         menu.add_command(label="Fester Ordner wählen …",
                          command=self._choose_output_dir)
         menu.add_separator()
+        # Die Vars MÜSSEN am Fenster hängen: als lokale Variablen würde
+        # der Garbage Collector sie sofort einsammeln und die Häkchen
+        # zeigten nie den gespeicherten Zustand (Audit-Befund).
+        self._menu_vars = {
+            "clean": tk.BooleanVar(value=self.cfg.clean_names),
+            "online": tk.BooleanVar(value=self.cfg.online_names),
+        }
         menu.add_checkbutton(
             label="Dateinamen bereinigen (z. B. „Film (2025).mkv“)",
             onvalue=True, offvalue=False,
-            variable=tk.BooleanVar(value=self.cfg.clean_names),
+            variable=self._menu_vars["clean"],
             command=self._toggle_clean_names)
         menu.add_checkbutton(
             label="Titel online abgleichen (TMDb) — exakter Filmtitel",
             onvalue=True, offvalue=False,
-            variable=tk.BooleanVar(value=self.cfg.online_names),
+            variable=self._menu_vars["online"],
             command=self._toggle_online_names)
         menu.add_command(label="TMDb-API-Key eingeben …",
                          command=self._edit_tmdb_key)
@@ -946,7 +1038,7 @@ class MainWindow(ttk.Frame):
         self._apply_output_button()
         for plan in self.plans.values():
             if plan is not None:
-                self._refresh_output_name(plan)   # DV-Endung erhalten
+                self._refresh_output_name(plan)   # Name an neuen Ordner anpassen
         self._update_preview()
         self._safe_save()
 
@@ -961,15 +1053,15 @@ class MainWindow(ttk.Frame):
         self._apply_output_button()
 
     def _apply_output_button(self) -> None:
-        """Grüne Umrandung, wenn ein fester Ordner gesetzt ist — passend zu
-        den anderen Outline-Buttons, nur als „eingestellt“-Signal."""
+        """Immer Cyan-Outline — exakt der Look von „+ Dateien …“/„+ Ordner …“
+        (Nutzerentscheid); ein fester Ordner zeigt sich nur im Button-Text."""
         if self.output_dir:
             self.output_btn.configure(
                 text=f"Ausgabe: {Path(self.output_dir).name}  ▾",
-                bootstyle="success-outline")
+                bootstyle="primary-outline")
         else:
             self.output_btn.configure(text="Ausgabe: Quellordner  ▾",
-                                      bootstyle="secondary-outline")
+                                      bootstyle="primary-outline")
 
     # ══ Sitzung speichern / wiederherstellen ═════════════════════════════
 
@@ -1000,8 +1092,8 @@ class MainWindow(ttk.Frame):
                 self._pending_restore[path] = job
                 paths.append(path)
         if paths:
-            self.log.log(f"{len(paths)} Job(s) aus der letzten Sitzung "
-                         f"wiederhergestellt.", "info")
+            self.log.log(f"{n_text(len(paths), 'Job', 'Jobs')} aus der "
+                         f"letzten Sitzung wiederhergestellt.", "info")
             self.add_files(paths)
 
     def _apply_restore(self, plan: FilePlan, job: dict) -> None:
@@ -1029,10 +1121,16 @@ class MainWindow(ttk.Frame):
                    or not self.tool_status[n].ok]
         if missing:
             Messagebox.show_error(
-                f"Benötigte Tools fehlen: {', '.join(missing)}.\n"
-                f"Bitte über das ⚙-Symbol einrichten.", "Tools fehlen",
+                f"Benötigte Werkzeuge fehlen: {', '.join(missing)}.\n"
+                f"Bitte über das ⚙-Symbol einrichten.", "Werkzeuge fehlen",
                 parent=self)
             return
+
+        # Endungen zuerst normalisieren (immer .mkv) — sonst prüfen
+        # Kollisions- und Überschreib-Dialog gegen Pfade, die der Runner
+        # gar nicht schreiben wird
+        for p in plans:
+            JobRunner.normalize_output_extension(p)
 
         # Ausgabe-Kollisionen (gleicher Dateiname aus verschiedenen Ordnern
         # bei festem Ausgabeordner) vor dem Start abfangen
@@ -1053,8 +1151,8 @@ class MainWindow(ttk.Frame):
         existing = [p for p in plans if Path(p.output_path).exists()]
         if existing:
             answer = Messagebox.yesno(
-                f"{len(existing)} Ausgabedatei(en) existieren bereits.\n"
-                f"Überschreiben?", "Ausgabe vorhanden", parent=self)
+                f"{n_text(len(existing), 'Ausgabedatei existiert', 'Ausgabedateien existieren')} "
+                f"bereits.\nÜberschreiben?", "Ausgabe vorhanden", parent=self)
             if answer not in ("Ja", "Yes"):
                 return
 
@@ -1149,12 +1247,12 @@ class MainWindow(ttk.Frame):
                 plan.warnings.append(
                     "Dolby Vision Profil 7 erkannt — viele Geräte zeigen "
                     "das aus MKV falsch an. Rechtsklick auf die Videospur "
-                    "→ „DV entfernen (HDR10)“.")
+                    "→ „DV/HDR → HDR10“.")
             self.plans[path] = plan
             self._refresh_output_name(plan)
             self._update_file_row(path, plan)
             for warning in plan.warnings:
-                self.log.log(f"{Path(path).name}: {warning}", "step")
+                self.log.log(f"⚠ {Path(path).name}: {warning}", "warn")
             if self.selected is None:
                 self.selected = path
                 self.file_list.select(path)
@@ -1193,7 +1291,7 @@ class MainWindow(ttk.Frame):
         if cancelled:
             message, style = "Abgebrochen.", "warning"
         elif success == total:
-            message = (f"{total} Datei{'en' if total != 1 else ''} "
+            message = (f"{n_text(total, 'Datei', 'Dateien')} "
                        f"erfolgreich verarbeitet.")
             style = "success"
         else:
@@ -1223,8 +1321,8 @@ class MainWindow(ttk.Frame):
         for path in done:
             self.plans.pop(path, None)
             self.file_list.remove(path)
-        self.log.log(f"{len(done)} erledigte Datei(en) aus der Liste "
-                     f"entfernt.", "dim")
+        self.log.log(f"{n_text(len(done), 'erledigte Datei', 'erledigte Dateien')} "
+                     f"aus der Liste entfernt.", "dim")
         if self.selected not in self.plans:
             self.selected = next(iter(self.plans), None)
             if self.selected:
@@ -1258,8 +1356,8 @@ class MainWindow(ttk.Frame):
                               before=self._info_btn)
         self.update_chip.bind(
             "<Button-1>", lambda _e: self._open_update(info.url))
-        self.log.log(f"Neue Version {info.latest} verfügbar — "
-                     f"klick auf den Hinweis oben oder {info.url}", "info")
+        self.log.log(f"Neue Version {info.latest} verfügbar — Hinweis oben "
+                     f"anklicken oder {info.url} öffnen.", "info")
 
     def _open_update(self, url: str) -> None:
         import webbrowser
@@ -1282,7 +1380,7 @@ class MainWindow(ttk.Frame):
 
     def _update_onboarding(self) -> None:
         # Nur PFLICHT-Tools entscheiden übers Onboarding — optionale
-        # (dovi_tool, mp4box) fehlen zu dürfen ist Normalzustand
+        # (dovi_tool) fehlen zu dürfen ist Normalzustand
         missing = (not self.tool_status
                    or any(not self.tool_status[n].ok
                           for n in toolchain.REQUIRED
@@ -1323,11 +1421,14 @@ class MainWindow(ttk.Frame):
         return True
 
     def _remember_geometry(self) -> None:
-        """Aktuelle Fenstergröße/-position für den nächsten Start merken —
-        nur im Normalzustand (nicht minimiert)."""
+        """Aktuelle Fenstergröße/-position für den nächsten Start merken.
+        Maximiert wird als eigenes Flag gespeichert — die zuletzt bekannte
+        Normal-Geometrie bleibt erhalten (für das spätere Ent-Maximieren)."""
         try:
             top = self.winfo_toplevel()
-            if top.state() == "normal":
+            state = top.state()
+            self.cfg.window_zoomed = (state == "zoomed")
+            if state == "normal":
                 self.cfg.window_geometry = top.geometry()
         except Exception:
             pass  # Geometrie zu merken darf das Beenden nie blockieren

@@ -5,7 +5,8 @@ Läuft in einem Worker-Thread (oder synchron in Tests) und meldet Fortschritt
 betroffene Datei ab, nie den Batch.
 
 Queue-Protokoll (Tupel):
-  ("LOG", text, tag)              tag: None|"info"|"error"|"success"|"step"|"dim"
+  ("LOG", text, tag)              tag: None|"info"|"error"|"success"|"step"
+                                       |"warn"|"new"|"dim"
   ("STATUS", text)
   ("PROGRESS_FILE", pct)          0..100 für die aktuelle Datei
   ("PROGRESS_TOTAL", pct)
@@ -25,7 +26,8 @@ import threading
 from pathlib import Path
 
 from . import dv
-from .commands import build_ffmpeg_downmix, build_mkvmerge_mux, stereo_temp_name
+from .commands import (build_ffmpeg_downmix, build_mkvmerge_mux,
+                       stereo_temp_name, subtitle_automation_note)
 from .model import FilePlan, FileStatus
 
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -56,6 +58,11 @@ class JobRunner:
         total = len(plans)
         success = 0
         try:
+            # Endung ZUERST normalisieren — die Kollisionsprüfung muss die
+            # ECHTEN Ausgabepfade sehen (ein manuell gewähltes „X.mp4“ wird
+            # zu „X.mkv“ und kann dann kollidieren).
+            for plan in plans:
+                self.normalize_output_extension(plan)
             self._mark_output_collisions(plans)
             for idx, plan in enumerate(plans):
                 if plan.status is FileStatus.ERROR:   # Kollision vorab erkannt
@@ -106,14 +113,18 @@ class JobRunner:
 
     # ── eine Datei ────────────────────────────────────────────────────────
 
+    @staticmethod
+    def normalize_output_extension(plan: FilePlan) -> None:
+        """Die Ausgabe ist IMMER eine MKV — die Endung wird hart auf „.mkv“
+        gesetzt, unabhängig davon, was die UI oder eine alte Sitzung setzte.
+        Läuft VOR jeder Kollisions-/Überschreib-Prüfung (UI-Start und
+        Runner)."""
+        if not plan.output_path.lower().endswith(".mkv"):
+            plan.output_path = str(Path(plan.output_path).with_suffix(".mkv"))
+
     def _run_single(self, plan: FilePlan) -> bool:
         settings = plan.stereo
-        # Sicherheitsnetz: Container-Endung muss zum Video-Modus passen —
-        # DV→8.1 IMMER .mp4 (der dvh1-Tag/mov_text scheitert sonst im
-        # Matroska-Muxer), sonst .mkv. Unabhängig davon, was die UI setzte.
-        want_ext = ".mp4" if plan.video_mode == dv.VIDEO_MODE_DV81 else ".mkv"
-        if not plan.output_path.lower().endswith(want_ext):
-            plan.output_path = str(Path(plan.output_path).with_suffix(want_ext))
+        self.normalize_output_extension(plan)   # Sicherheitsnetz
 
         plan.status = FileStatus.RUNNING
         plan.error = ""
@@ -127,7 +138,7 @@ class JobRunner:
         try:
             self._validate(plan)
             stereo_tracks = plan.stereo_sources()
-            is_dv = plan.video_mode in (dv.VIDEO_MODE_HDR10, dv.VIDEO_MODE_DV81)
+            is_dv = plan.video_mode in dv.DV_MODES
             dv_steps = 2 if is_dv else 0    # Extrahieren + DV-Verarbeitung
             steps = dv_steps + len(stereo_tracks) + 1
             stereo_files: dict[int, str] = {}
@@ -142,11 +153,14 @@ class JobRunner:
                 for i, track in enumerate(stereo_tracks, start=dv_steps):
                     self._check_cancel()
                     out = str(Path(temp_dir) / stereo_temp_name(track, settings))
+                    # Tag "new": die Zeile erzeugt eine NEUE Spur — Cyan,
+                    # dieselbe Semantik wie das Plus in der Spurtabelle.
                     self.q.put(("LOG",
-                                f"  [{i + 1}/{steps}] Downmix Spur {track.id} "
-                                f"({track.lang}, {track.channels}ch) → "
-                                f"{settings.codec.upper()} {settings.bitrate} "
-                                f"Stereo …", "step"))
+                                f"  [{i + 1}/{steps}] Konvertiere Spur "
+                                f"{track.id} ({track.lang}, "
+                                f"{track.channels}ch) → "
+                                f"{settings.short_label()} "
+                                f"{settings.bitrate} …", "new"))
                     cmd = build_ffmpeg_downmix(
                         self.tools["ffmpeg"], plan, track, settings, out)
                     self._run_ffmpeg(cmd, plan.media.duration_s,
@@ -155,25 +169,19 @@ class JobRunner:
                     stereo_files[track.id] = out
 
             self._check_cancel()
+            sub_note = subtitle_automation_note(plan)
+            if sub_note:
+                self.q.put(("LOG", f"  Hinweis: {sub_note}", "info"))
             self.q.put(("LOG", f"  [{steps}/{steps}] Muxe → "
                                f"{Path(plan.output_path).name} …", "step"))
             Path(plan.output_path).parent.mkdir(parents=True, exist_ok=True)
 
             slice_start = (steps - 1) * 100 // steps
-            if plan.video_mode == dv.VIDEO_MODE_DV81:
-                mux_cmd, warns = dv.build_ffmpeg_dv_mp4(
-                    self.tools["ffmpeg"], video_file, plan, stereo_files,
-                    plan.output_path)
-                for w in warns:
-                    self.q.put(("LOG", f"  Hinweis: {w}", "info"))
-                self._run_ffmpeg(mux_cmd, plan.media.duration_s,
-                                 slice_start=slice_start, slice_end=100)
-            else:
-                mux_cmd = build_mkvmerge_mux(
-                    self.tools["mkvmerge"], plan, settings, stereo_files,
-                    video_file=video_file)
-                self._run_mkvmerge(mux_cmd, slice_start=slice_start,
-                                   slice_end=100)
+            mux_cmd = build_mkvmerge_mux(
+                self.tools["mkvmerge"], plan, settings, stereo_files,
+                video_file=video_file)
+            self._run_mkvmerge(mux_cmd, slice_start=slice_start,
+                               slice_end=100)
             # Abbruch mitten im Mux hinterlässt eine abgeschnittene Datei —
             # das darf niemals als DONE enden.
             self._check_cancel()
@@ -185,7 +193,7 @@ class JobRunner:
 
         except _Cancelled:
             plan.status = FileStatus.SKIPPED
-            plan.error = "abgebrochen"
+            plan.error = "Abgebrochen."
             self._file_status(plan)
             if self._output_signature(plan) != before_sig:
                 self._remove_partial(plan)
@@ -203,22 +211,21 @@ class JobRunner:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _dv_process(self, plan: FilePlan, temp_dir: str, steps: int) -> str:
-        """DV-Remux: HEVC extrahieren, dann je nach Modus RPU+EL entfernen
-        (hdr10) oder RPU von Profil 7 → 8.1 konvertieren (dv81). Der
-        Base-Layer (das Bild) wird bitgenau weitergereicht."""
+        """Modus „hdr10“: HEVC extrahieren, dann die Dolby-Vision-Daten
+        (RPU + EL) per dovi_tool entfernen — übrig bleibt reines HDR10.
+        Der Base-Layer (das Bild) wird bitgenau weitergereicht."""
         if not self.tools.get("dovi_tool"):
-            raise JobError("dovi_tool fehlt — bitte über ⚙ Werkzeuge "
-                           "herunterladen oder Pfad wählen.")
+            raise JobError("dovi_tool fehlt — bitte über das ⚙-Symbol "
+                           "herunterladen oder den Pfad wählen.")
         raw = str(Path(temp_dir) / "video_dv.hevc")
         out = str(Path(temp_dir) / "video_out.hevc")
 
         # mkvextract (liegt neben mkvmerge) bevorzugen — bewahrt die exakte
         # Stream-Struktur für wählerische Hardware-Decoder; ffmpeg als Fallback
-        mkvextract = str(Path(self.tools["mkvmerge"]).with_name(
-            "mkvextract.exe"))
+        mkvextract = self._mkvextract_path()
         video_tracks = plan.media.by_type("video")
         end = 100 // steps
-        if Path(mkvextract).exists() and video_tracks:
+        if mkvextract and video_tracks:
             self.q.put(("LOG", f"  [1/{steps}] Extrahiere HEVC-Stream via "
                                f"mkvextract (bitgenau) …", "step"))
             self._run_mkvmerge(
@@ -234,22 +241,10 @@ class JobRunner:
                 plan.media.duration_s, slice_start=0, slice_end=end)
         self._check_cancel()
 
-        info = plan.dv
-        already_81 = info is not None and info.dv_profile in (8, None)
-        if plan.video_mode == dv.VIDEO_MODE_HDR10:
-            self.q.put(("LOG", f"  [2/{steps}] Entferne Dolby-Vision-"
-                               f"Metadaten (RPU + EL) → reines HDR10 …",
-                        "step"))
-            cmd = dv.build_dovi_remove(self.tools["dovi_tool"], raw, out)
-        elif already_81:
-            # Quelle ist schon 8.x → keine RPU-Konvertierung nötig
-            self.q.put(("LOG", f"  [2/{steps}] Bereits Profil 8 — keine "
-                               f"RPU-Konvertierung nötig …", "step"))
-            return raw
-        else:
-            self.q.put(("LOG", f"  [2/{steps}] Konvertiere Dolby Vision "
-                               f"Profil 7 → 8.1 (EL verworfen) …", "step"))
-            cmd = dv.build_dovi_convert(self.tools["dovi_tool"], raw, out)
+        self.q.put(("LOG", f"  [2/{steps}] Entferne Dolby-Vision-"
+                           f"Metadaten (RPU + EL) → reines HDR10 …",
+                    "step"))
+        cmd = dv.build_dovi_remove(self.tools["dovi_tool"], raw, out)
 
         returncode, stderr = self._stream_process(
             cmd, progress_cb=lambda _line: None)
@@ -264,17 +259,24 @@ class JobRunner:
         self.q.put(("PROGRESS_FILE", 2 * 100 // steps))
         return out
 
+    def _mkvextract_path(self) -> str | None:
+        """mkvextract liegt neben mkvmerge — für die bitgenaue
+        HEVC-Extraktion im DV-Remux."""
+        mkvmerge = self.tools.get("mkvmerge", "")
+        if not mkvmerge:
+            return None
+        candidate = Path(mkvmerge).with_name("mkvextract.exe")
+        return str(candidate) if candidate.exists() else None
+
     def _validate(self, plan: FilePlan) -> None:
         if not plan.has_output():
             raise JobError("Keine Spur für die Ausgabe ausgewählt.")
-        if plan.video_mode in (dv.VIDEO_MODE_HDR10, dv.VIDEO_MODE_DV81):
+        if plan.video_mode in dv.DV_MODES:
             if not plan.kept_ids("video"):
                 raise JobError("DV-Modus gewählt, aber keine Videospur "
                                "in der Ausgabe.")
             info = plan.dv
-            reason = (info.hdr10_blocked_reason()
-                      if plan.video_mode == dv.VIDEO_MODE_HDR10
-                      else info.dv81_blocked_reason()) if info else None
+            reason = info.hdr10_blocked_reason() if info else None
             if reason:
                 raise JobError(f"DV-Modus nicht möglich: {reason}")
         src = Path(plan.media.path)
@@ -332,7 +334,8 @@ class JobRunner:
             return
         if returncode == 1:
             self.q.put(("LOG",
-                        f"  {tool}-Warnung: {stderr[-300:].strip()}", "info"))
+                        f"  ⚠ {tool}-Warnung: {stderr[-300:].strip()}",
+                        "warn"))
         elif returncode != 0:   # >=2 = Fehler, negativ = per Signal beendet
             raise JobError(
                 f"{tool}-Fehler (Exit {returncode}): {stderr[-600:].strip()}")
@@ -347,6 +350,11 @@ class JobRunner:
             text=True, encoding="utf-8", errors="ignore",
             creationflags=_CREATE_NO_WINDOW)
         self._active_proc = proc
+        # Rennen schließen: Cancel VOR/BEIM Spawn gesetzt → terminate_active
+        # sah noch None. Prozesse ohne stdout-Ausgabe (dovi_tool) liefen
+        # sonst trotz Abbruch komplett durch.
+        if self.cancel.is_set():
+            proc.terminate()
 
         stderr_chunks: list[str] = []
         drain = threading.Thread(

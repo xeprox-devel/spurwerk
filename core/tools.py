@@ -10,8 +10,8 @@ from pathlib import Path
 
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
-REQUIRED = ("mkvmerge", "ffmpeg")   # ffmpeg nur für Stereo-Aktionen nötig
-# optional: ffprobe (DV-Analyse), dovi_tool (DV-Remux inkl. DV→8.1-MP4)
+REQUIRED = ("mkvmerge", "ffmpeg")   # ffmpeg nur für Konvertier-Aktionen nötig
+# optional: ffprobe (DV-Analyse), dovi_tool („DV/HDR → HDR10“)
 OPTIONAL = ("ffprobe", "dovi_tool")
 ALL_TOOLS = REQUIRED + OPTIONAL
 
@@ -39,7 +39,7 @@ class ToolStatus:
 
 
 def detect_tools(base_path: Path, configured: dict[str, str]) -> dict[str, str]:
-    """Konfigurierte Pfade haben Vorrang, sonst tools/-Ordner."""
+    """Konfigurierte Pfade haben Vorrang, sonst tools/-Ordner (flach)."""
     result: dict[str, str] = {}
     for name in ALL_TOOLS:
         configured_path = configured.get(name, "")
@@ -61,7 +61,9 @@ def probe(name: str, path: str) -> ToolStatus:
         result = subprocess.run(
             [path, flag], capture_output=True, text=True, encoding="utf-8",
             errors="ignore", timeout=15, creationflags=_CREATE_NO_WINDOW)
-        match = _VERSION_RE[name].search(result.stdout or "")
+        # stdout UND stderr durchsuchen — manche Tools melden dorthin
+        match = _VERSION_RE[name].search(
+            (result.stdout or "") + (result.stderr or ""))
         if match:
             # ffmpeg-Git-Builds: "2025-09-04-git-…" auf Datum kürzen
             status.version = match.group(1).split("-git")[0]

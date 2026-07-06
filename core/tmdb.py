@@ -1,7 +1,7 @@
 """Optionaler Online-Titelabgleich über The Movie Database (TMDb).
 
 Aus einem Release-Dateinamen wird der kanonische Filmtitel ermittelt
-(z. B. „Obsession – Du sollst mich lieben (2025)"). Rein optional: ohne
+(z. B. „Obsession – Du sollst mich lieben (2025)“). Rein optional: ohne
 API-Key oder bei jedem Netz-/Parsefehler gibt es None zurück, und der
 Aufrufer nutzt dann die Offline-Bereinigung.
 
@@ -14,10 +14,11 @@ import json
 import urllib.parse
 import urllib.request
 
+from version import USER_AGENT
+
 from .naming import _ILLEGAL, clean_title
 
 SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
-USER_AGENT = "Spurwerk/1.0"
 
 # Eingebauter API-Key (wie bei Jellyfin) — damit Endnutzer sich NICHT
 # registrieren müssen. Der öffentliche Quellcode bleibt KEY-FREI: der Key
@@ -69,7 +70,7 @@ def _pick(results: list[dict], year: str | None) -> dict | None:
 
 def canonical_name(api_key: str, filename: str,
                    lang: str = "de-DE") -> str | None:
-    """„Film.2025.UHD.WEB-DL…mkv" → „Kanonischer Titel (2025)" oder None."""
+    """„Film.2025.UHD.WEB-DL…mkv“ → „Kanonischer Titel (2025)“ oder None."""
     from pathlib import Path
     title, year = clean_title(Path(filename).stem)
     if not title:

@@ -1,4 +1,5 @@
-"""Tool-Downloader: holt mkvmerge/mkvextract/ffmpeg in den tools/-Ordner.
+"""Tool-Downloader: holt mkvmerge/mkvextract, ffmpeg/ffprobe und dovi_tool
+in den tools/-Ordner.
 
 Komplett Standardbibliothek (urllib, gzip, xml, hashlib, zipfile).
 Quellen (verifiziert 2026-07-04, siehe UMSETZUNGSPLAN.md Abschnitt 6):
@@ -9,6 +10,7 @@ Quellen (verifiziert 2026-07-04, siehe UMSETZUNGSPLAN.md Abschnitt 6):
   FFmpeg x64  gyan.dev release-essentials.zip (echtes Stable-Release,
               .sha256 daneben); Fallback BtbN GitHub latest.
   FFmpeg x86  Community-Build sudo-nautilus/FFmpeg-Builds-Win32.
+  dovi_tool   GitHub-Release von quietvoid (nur 64-bit).
 
 Die Architektur richtet sich nach dem BETRIEBSSYSTEM (nicht nach der
 Python-Bitness): ein 32-bit-Prozess auf 64-bit-Windows startet problemlos
@@ -30,7 +32,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-USER_AGENT = "Spurwerk/2.0 (Tool-Downloader; Windows)"
+from version import USER_AGENT as _APP_USER_AGENT
+
+USER_AGENT = f"{_APP_USER_AGENT} (Tool-Downloader; Windows)"
 TIMEOUT = 30
 CHUNK = 1024 * 1024
 

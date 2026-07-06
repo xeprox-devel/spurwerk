@@ -21,21 +21,30 @@ class LogPanel(CollapsibleSection):
         self.body.columnconfigure(0, weight=1)
         self.body.rowconfigure(0, weight=1)
 
+        # Standard-Textfarbe Cyan — dieselbe Farbfamilie wie die
+        # „+ Dateien …“-Buttons (Nutzerentscheid: ein Akzent, eine Linie).
         self.text = scrolledtext.ScrolledText(
             self.body, wrap="word", height=9, state="disabled",
-            bg=theme.COLORS["dark"], fg=theme.COLORS["fg"],
-            insertbackground=theme.COLORS["fg"], relief="flat",
+            bg=theme.COLORS["dark"], fg=theme.COLORS["primary"],
+            insertbackground=theme.COLORS["primary"], relief="flat",
             font=("Cascadia Mono", 9), borderwidth=0)
         self.text.grid(row=0, column=0, sticky="nsew", pady=(2, 0))
 
+        # Ein Tag, eine Bedeutung: step = Prozessschritt (hell, hebt sich
+        # vom Cyan-Standard ab), warn = Warnung (Amber), new = neu erzeugte
+        # Spur/Datei (Cyan wie der Standard).
         self.text.tag_config("error", foreground=theme.COLORS["danger"])
         self.text.tag_config("success", foreground=theme.COLORS["success"])
-        self.text.tag_config("info", foreground=theme.COLORS["info"])
-        self.text.tag_config("step", foreground=theme.COLORS["warning"])
+        # Hinweise laufen im Standard-Cyan mit (Nutzerentscheid) — nur
+        # Fehler/Erfolg/Warnung und Schritt-Zeilen stechen heraus.
+        self.text.tag_config("info", foreground=theme.COLORS["primary"])
+        self.text.tag_config("step", foreground=theme.COLORS["fg"])
+        self.text.tag_config("warn", foreground=theme.COLORS["warning"])
         self.text.tag_config("new", foreground=theme.COLORS["primary"])
         self.text.tag_config("dim", foreground=theme.MUTED)
 
-        ttk.Button(self.body, text="Log leeren", bootstyle="secondary-link",
+        ttk.Button(self.body, text="Protokoll leeren",
+                   bootstyle="secondary-link",
                    command=self.clear).grid(row=1, column=0, sticky="e")
 
     def log(self, message: str, tag: str | None = None) -> None:

@@ -15,7 +15,7 @@ core/_apikey.py
 tools/
 
 # Laufzeit-/Temporärdaten
-temp_mkv_process/
+output/
 
 # Generierte Test-Medien (Skript: tests/make_fixtures.py)
 tests/fixtures/

@@ -1,18 +1,16 @@
 """Dolby-Vision-/HDR-Analyse und -Pipeline (verlustfrei, kein Re-Encoding).
 
-Fachlicher Kern (siehe Feature-Spec „DV/HDR-Kompatibilitäts-Remux"):
+Fachlicher Kern (siehe Feature-Spec „DV/HDR-Kompatibilitäts-Remux“):
 UHD-Blu-ray-Remuxes tragen oft DV **Profil 7** (Dual-Layer BL+EL+RPU), das
-aus MKV kaum ein Gerät korrekt abspielt (Grün-/Lilastich). Zwei Reparaturen,
-beide ohne das Videobild anzufassen:
+aus MKV kaum ein Gerät korrekt abspielt (Grün-/Lilastich). Die Reparatur —
+ohne das Videobild anzufassen:
 
-  „hdr10"  RPU+EL entfernen → reiner HDR10-Base-Layer, MKV bleibt MKV.
-           100 % verlustfrei. GESPERRT bei Profil 5 (kein HDR10-Fallback —
-           ohne RPU sind die Farben kaputt).
-  „dv81"   RPU von Profil 7 → 8.1 umrechnen, EL verwerfen → MP4 mit
-           DV 8.1 + HDR10-Fallback. Bei FEL-Quellen gehen nur die
-           EL-Verfeinerungsdaten verloren (visuell vernachlässigbar).
+  „hdr10“  Dolby-Vision-Daten (RPU + EL) entfernen → reiner HDR10-Base-
+           Layer, MKV bleibt MKV. 100 % verlustfrei, läuft auf jedem Gerät.
+           GESPERRT bei Profil 5 (kein HDR10-Fallback — ohne RPU sind die
+           Farben kaputt).
 
-Alle Erkennungs-Details (ffprobe side_data „DOVI configuration record")
+Alle Erkennungs-Details (ffprobe side_data „DOVI configuration record“)
 wurden am lokalen Build verifiziert; dovi_tool lehnt MKV-Input ab, darum
 wird der HEVC-Stream immer zuerst extrahiert.
 """
@@ -28,7 +26,10 @@ _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 VIDEO_MODE_COPY = "copy"
 VIDEO_MODE_HDR10 = "hdr10"
-VIDEO_MODE_DV81 = "dv81"
+
+# Modi, die die DV-Pipeline (Extraktion + dovi_tool) durchlaufen —
+# aktuell genau einer: „DV/HDR → HDR10“
+DV_MODES = (VIDEO_MODE_HDR10,)
 
 # Standard-Bildraten (fps). Nur bei diesen setzen wir beim DV-Remux eine
 # exakte --default-duration; alles Ungewöhnliche (VFR, exotische Raten)
@@ -78,16 +79,6 @@ class DVInfo:
                     "ohne RPU wären die Farben kaputt. Entfernen unmöglich.")
         return None
 
-    def dv81_blocked_reason(self) -> str | None:
-        if not self.is_hevc:
-            return "DV-Remux ist nur für HEVC definiert."
-        if not self.has_dv:
-            return "Kein Dolby Vision vorhanden."
-        if self.dv_profile == 5:
-            return ("Profil 5: keine RPU-Konvertierung nach 8.1 möglich — "
-                    "nur Container-Wechsel (nicht implementiert).")
-        return None
-
 
 class DVError(Exception):
     pass
@@ -127,8 +118,8 @@ def parse_stream(stream: dict) -> DVInfo:
 
 
 def default_duration_arg(frame_rate: str) -> str | None:
-    """Wandelt eine ffprobe-Bildrate („24000/1001") in das mkvmerge-Token für
-    `--default-duration TID:<token>` — z. B. „24000/1001fps".
+    """Wandelt eine ffprobe-Bildrate („24000/1001“) in das mkvmerge-Token für
+    `--default-duration TID:<token>` — z. B. „24000/1001fps“.
 
     Beim DV-Remux wird der HEVC-Stream als rohes Elementary-Stream-File
     extrahiert und neu gemuxt. Trägt dessen SPS/VUI keine Timing-Angabe, rät
@@ -177,101 +168,5 @@ def build_extract_hevc(ffmpeg: str, src: str, out_hevc: str) -> list[str]:
 
 
 def build_dovi_remove(dovi_tool: str, in_hevc: str, out_hevc: str) -> list[str]:
-    """Modus „hdr10": RPU + EL entfernen — übrig bleibt der HDR10-BL."""
+    """Modus „hdr10“: RPU + EL entfernen — übrig bleibt der HDR10-BL."""
     return [dovi_tool, "remove", "-i", in_hevc, "-o", out_hevc]
-
-
-def build_dovi_convert(dovi_tool: str, in_hevc: str,
-                       out_hevc: str) -> list[str]:
-    """Modus „dv81": RPU Profil 7 → 8.1, EL verwerfen (-m 2 + --discard)."""
-    return [dovi_tool, "-m", "2", "convert", "--discard",
-            "-i", in_hevc, "-o", out_hevc]
-
-
-# ── Modus A: DV-8.1-MP4 (nur ffmpeg — MP4Box wird nicht benötigt) ─────────
-
-# Audio-Codecs, die MP4 sauber trägt → 1:1 kopieren; alles andere
-# (TrueHD, DTS, FLAC, PCM …) wird nach E-AC3 gewandelt (Spec 6.3).
-MP4_AUDIO_CODECS = {"A_AAC", "A_AC3", "A_EAC3", "A_OPUS"}
-# Text-Untertitel → mov_text; Bild-Untertitel (PGS/VobSub) kann MP4 nicht.
-MP4_TEXT_SUBS = {"S_TEXT/UTF8", "S_TEXT/ASS", "S_TEXT/SSA", "S_TEXT/USF"}
-
-
-def mp4_audio_compatible(codec_id: str) -> bool:
-    return codec_id in MP4_AUDIO_CODECS
-
-
-def mp4_sub_compatible(codec_id: str) -> bool:
-    return codec_id in MP4_TEXT_SUBS
-
-
-def build_ffmpeg_dv_mp4(ffmpeg: str, video_hevc: str, plan,
-                        stereo_files: dict[int, str], out_mp4: str,
-                        stereo_bitrate: str = "640k") -> tuple[list[str], list[str]]:
-    """Ein ffmpeg-Lauf: DV-8.1-Video (dovi_rpu) + MP4-taugliches Audio +
-    Text-Untertitel + Kapitel → MP4. Rückgabe: (argv, warnungen).
-
-    Eingaben: 0 = bereinigtes/konvertiertes HEVC, 1 = Original-MKV,
-    2.. = erzeugte Stereo-Dateien (in Anhäng-Reihenfolge).
-    """
-    media = plan.media
-    warnings: list[str] = []
-
-    inputs = [video_hevc, media.path]
-    stereo_tracks = plan.stereo_sources()
-    stereo_fid: dict[int, int] = {}
-    for t in stereo_tracks:
-        stereo_fid[t.id] = len(inputs)
-        inputs.append(stereo_files[t.id])
-
-    cmd = [ffmpeg, "-y", "-v", "error",
-           "-progress", "pipe:1", "-nostats"]
-    for path in inputs:
-        cmd += ["-i", path]
-
-    # Video: DV-RPU in dvvC-Box schreiben, bitgenau
-    cmd += ["-map", "0:v:0", "-c:v", "copy",
-            "-bsf:v", "dovi_rpu", "-strict", "unofficial", "-tag:v", "dvh1"]
-
-    out_audio = 0
-    # Original-Audiospuren (behalten) — kompatible kopieren, sonst E-AC3
-    for tid in plan.kept_ids("audio"):
-        track = media.track(tid)
-        src_idx = media.ffmpeg_audio_index(tid)
-        cmd += ["-map", f"1:a:{src_idx}"]
-        if mp4_audio_compatible(track.codec_id):
-            cmd += [f"-c:a:{out_audio}", "copy"]
-        else:
-            cmd += [f"-c:a:{out_audio}", "eac3", f"-b:a:{out_audio}", "640k"]
-            warnings.append(
-                f"Audiospur {tid} ({track.codec_name}) ist nicht MP4-tauglich "
-                f"→ nach E-AC3 gewandelt (einziger nicht-verlustfreie Schritt).")
-        if track.lang != "und":
-            cmd += [f"-metadata:s:a:{out_audio}", f"language={track.lang}"]
-        out_audio += 1
-
-    # Erzeugte Stereo-/Downmix-Spuren (bereits MP4-tauglich)
-    for track in stereo_tracks:
-        cmd += ["-map", f"{stereo_fid[track.id]}:a:0",
-                f"-c:a:{out_audio}", "copy"]
-        if track.lang != "und":
-            cmd += [f"-metadata:s:a:{out_audio}", f"language={track.lang}"]
-        out_audio += 1
-
-    # Untertitel: Text → mov_text; Bild-Untertitel kann MP4 nicht
-    out_sub = 0
-    for tid in plan.kept_ids("subtitles"):
-        track = media.track(tid)
-        if not mp4_sub_compatible(track.codec_id):
-            warnings.append(
-                f"Untertitel {tid} ({track.codec_name}) ist nicht MP4-tauglich "
-                f"→ weggelassen (MKV-Modus behält es).")
-            continue
-        cmd += ["-map", f"1:s:{media.ffmpeg_sub_index(tid)}",
-                f"-c:s:{out_sub}", "mov_text"]
-        if track.lang != "und":
-            cmd += [f"-metadata:s:s:{out_sub}", f"language={track.lang}"]
-        out_sub += 1
-
-    cmd += ["-map_chapters", "1", out_mp4]
-    return cmd, warnings

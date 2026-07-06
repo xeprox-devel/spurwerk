@@ -6,6 +6,70 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-07-06
+
+### Geändert
+- **„DV/HDR → HDR10" entschärft jetzt auch die Untertitel-Automatik:**
+  Bild-Untertitel (PGS/VobSub) verlieren im Kompatibilitätsmodus ihre
+  Default-/Forced-Markierung — sie bleiben vollständig in der Datei,
+  springen aber nicht mehr automatisch an. Der Grund aus der Praxis:
+  Eine automatisch aktive Bild-Spur zwingt Player wie Jellyfin zum
+  Einbrennen (Transkodierung des kompletten 4K-Videos) — die Wiedergabe
+  startet dann je nach Server gar nicht. Gibt es eine Textspur gleicher
+  Sprache, übernimmt die die Automatik (bevorzugt die passende
+  Forced-Spur) — Zwangs-Untertitel funktionieren damit weiter, nur eben
+  als Text im Direct Play. Vorschau und Protokoll sagen an, was passiert.
+- **Radikale Vereinfachung der Video-Optionen:** Es gibt nur noch zwei
+  Wahlmöglichkeiten pro Datei — **Original kopieren** oder
+  **„DV/HDR → HDR10"** (Dolby-Vision-Daten entfernen, reines HDR10 im
+  MKV). Jede Ausgabe läuft damit garantiert überall — auch auf
+  Einplatinen-Playern (ROCK64 & Co.) und älteren TVs; Untertitel, Ton
+  und Kapitel bleiben automatisch 1:1 erhalten. HDR10+ bleibt erhalten,
+  Profil 5 bleibt mit Begründung gesperrt (kein HDR10-Fallback — ohne
+  DV-Daten wären die Farben kaputt).
+
+- **Große Konsistenz-Runde durch die komplette Oberfläche:** eine
+  Sprache (durchgängig „Werkzeuge", „Untertitel", „Protokoll" — nie
+  mehr Tools/Subs/Log; echte Pluralformen statt „Datei(en)"), ein
+  Design (Akzent-Cyan als eine Linie für Buttons, Fortschritt und
+  Protokoll — Lila/Indigo wurde komplett aus der Farbwelt entfernt;
+  Grün/Rot/Amber bleiben Ergebnis, Fehler, Warnung), und
+  Selbsterklärung überall: Tooltips auf allen Symbolen, „▶ Start (F5)"
+  zeigt sein Tastenkürzel, eine Legende erklärt die Spurtabelle
+  (✓/＋/★/R/M), die Vorschau zeigt bei festem Ausgabeordner den
+  kompletten Zielpfad.
+
+### Entfernt
+- **Die DV-Ausgabemodi „DV → Profil 8.1 (MP4)" und „DV → Profil 8.1
+  (MKV)"** samt OCR-Untertitel-Pipeline (PGS → Text) und
+  Tesseract-Integration — ersatzlos. Der ehrliche Grund: Praxistests
+  auf realen Geräten zeigten, dass DV-Ausgaben je nach Player
+  unabspielbar sind (MP4 mit Textspur: Datei startet gar nicht;
+  DV-Reste im MKV: Ton ohne Bild). Statt Spezialwegen mit Fußnoten
+  gibt es jetzt die Garantie-Schiene: Kopieren = alles bleibt,
+  „DV/HDR → HDR10" = läuft überall.
+
+### Behoben
+- **Ausgabe-Menü: Häkchen zeigten den gespeicherten Zustand nicht**
+  (Dateinamen bereinigen, TMDb) — die Menü-Variablen wurden vom
+  Garbage Collector eingesammelt, bevor das Menü sie lesen konnte.
+  Jetzt zeigen die Optionen ihren echten Zustand.
+- **„Neue Spur als Standard-Audiospur"** zeigte beim Wechsel zwischen
+  Dateien nicht den Zustand der gerade markierten Datei.
+- **„Ausgabename/-ort ändern …" war während eines laufenden Jobs
+  möglich** — Vorschau und tatsächliche Ausgabe konnten auseinanderlaufen.
+  Jetzt gesperrt, solange verarbeitet wird.
+- **Strg+O funktionierte mit aktivem Caps Lock falsch** (öffnete den
+  Ordner- statt des Datei-Dialogs).
+- **Fenster-Merken auf mehreren Monitoren:** Die gespeicherte Position
+  wurde beim Start auf den Hauptmonitor gezwungen (Zweitmonitor links
+  war unmöglich); der Maximiert-Zustand ging verloren. Beides behoben.
+
+### Qualität
+- 123 automatisierte Tests (Unit + End-to-End mit echten Tools),
+  inklusive Nachbau des realen Jellyfin-Falls, der die neue
+  Untertitel-Automatik motiviert hat.
+
 ## [1.1.0] — 2026-07-05
 
 ### Hinzugefügt

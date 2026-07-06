@@ -121,9 +121,12 @@ class RuleEditorDialog(ttk.Toplevel):
         ttk.Checkbutton(box, text="Neue Spur als Standard-Audiospur",
                         variable=self.stereo_default, bootstyle="primary"
                         ).pack(anchor="w", pady=(8, 2))
-        ttk.Label(box, text="Zielformat/Kanäle: im Panel „Audio-"
-                            "Konvertierung“ des Hauptfensters",
-                  foreground=theme.MUTED).pack(anchor="w", pady=(4, 0))
+        ttk.Label(box, text="Zielformat/Kanäle: im Panel "
+                            "„Audio-Konvertierung“ des Hauptfensters —\n"
+                            "es erscheint, sobald bei der markierten Datei "
+                            "eine Konvertierung ansteht.",
+                  foreground=theme.MUTED, justify="left"
+                  ).pack(anchor="w", pady=(4, 0))
 
     def _build_sub_box(self, parent) -> None:
         box = ttk.Labelframe(parent, text=" Untertitel ", padding=10)
@@ -138,7 +141,8 @@ class RuleEditorDialog(ttk.Toplevel):
                             value=value, bootstyle="primary"
                             ).pack(anchor="w", pady=2)
         self.keep_forced = ttk.BooleanVar(value=p.keep_forced_subs)
-        ttk.Checkbutton(box, text="Forced-Subs bevorzugter Sprachen immer behalten",
+        ttk.Checkbutton(box, text="Erzwungene Untertitel (forced) bevorzugter "
+                                  "Sprachen immer behalten",
                         variable=self.keep_forced, bootstyle="primary"
                         ).pack(anchor="w", pady=(8, 2))
 

@@ -51,7 +51,8 @@ class FileList(ttk.Frame):
 
         self.tree.tag_configure("error", foreground=theme.COLORS["danger"])
         self.tree.tag_configure("done", foreground=theme.COLORS["success"])
-        self.tree.tag_configure("running", foreground=theme.COLORS["primary"])
+        # „läuft“ im Akzent-Cyan — info entspricht in theme.py bewusst dem Akzent
+        self.tree.tag_configure("running", foreground=theme.COLORS["info"])
         self.tree.tag_configure("warn", foreground=theme.COLORS["warning"])
         self.tree.tag_configure("dim", foreground=theme.MUTED)
 
@@ -67,7 +68,7 @@ class FileList(ttk.Frame):
 
     def add_file(self, path: str) -> None:
         self.tree.insert("", "end", iid=path, text=f" {Path(path).name}",
-                         values=("—", "wird analysiert …", "scanne"),
+                         values=("—", "wird analysiert …", "wird gescannt"),
                          tags=("dim",))
 
     def update_file(self, path: str, *, duration: float | None = None,

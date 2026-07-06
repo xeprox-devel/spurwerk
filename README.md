@@ -11,6 +11,14 @@ wieder raus. Deine Originaldateien bleiben immer unangetastet.
 **Download:** [aktuelle Version — GitHub-Releases](https://github.com/xeprox-devel/spurwerk/releases/latest)
 · [Projektseite mit Anleitung](https://ricardo-rehfeldt.de/tools/spurwerk/)
 
+<p align="center">
+  <img src="images/03.png" width="720" alt="Spurwerk-Hauptfenster: Warteschlange, Spurtabelle und Protokoll">
+</p>
+<p align="center">
+  <img src="images/02.png" width="352" alt="Werkzeuge-Dialog: Ein-Klick-Einrichtung von MKVToolNix, FFmpeg und dovi_tool">
+  <img src="images/01.png" width="352" alt="Über-Dialog mit Versions- und Lizenzinformationen">
+</p>
+
 ---
 
 ## Warum Spurwerk?
@@ -59,18 +67,27 @@ Dein Fernseher, deine Soundbar oder dein Tablet kann kein DTS oder kein
 oder AAC-Spur — wahlweise in 5.1 oder Stereo, mit hochwertigen
 Downmix-Profilen. Das Original kannst du behalten oder ersetzen.
 
-**🎨 Dolby Vision — behalten oder anpassen (verlustfrei):**
+**🎨 Dolby Vision — behalten oder entfernen (verlustfrei):**
 Manche 4K-MKVs mit Dolby Vision zeigen auf einigen Geräten einen
 Grün-/Lilastich, auf anderen laufen sie einwandfrei. Spurwerk erkennt
 das Format automatisch und gibt dir pro Datei (Rechtsklick auf die
-Videospur) die Wahl:
+Videospur) genau zwei Wahlmöglichkeiten:
 - **Kopieren** — Video unangetastet, DV (und HDR10+) bleiben komplett
-- **DV entfernen → HDR10** — DV raus, reines HDR10 (läuft überall),
-  HDR10+ bleibt erhalten, Ton und Untertitel 1:1
-- **DV → Profil 8.1 (MP4)** — DV-MP4 für zertifizierte Geräte
+- **DV/HDR entfernen → HDR10** — die Dolby-Vision-Daten kommen raus,
+  übrig bleibt reines HDR10, das **überall läuft** — auch auf
+  Einplatinen-Playern (ROCK64 & Co.) und älteren TVs. HDR10+ bleibt
+  erhalten; Untertitel, Ton und Kapitel bleiben automatisch 1:1.
 
-Alle drei ohne Neuberechnung des Bildes. Profil 5 (kein HDR10-Fallback)
+Beides ohne Neuberechnung des Bildes. Profil 5 (kein HDR10-Fallback)
 wird mit Begründung gesperrt, statt kaputte Farben zu erzeugen.
+
+Der Kompatibilitätsmodus denkt dabei auch an die Untertitel: Bild-
+Untertitel (PGS) springen in der Ausgabe nicht mehr automatisch an —
+eine automatisch aktive Bild-Spur zwingt Player wie Jellyfin sonst zum
+Einbrennen (Transkodierung), und die Wiedergabe startet je nach Server
+gar nicht. Gibt es eine Textspur gleicher Sprache, übernimmt die die
+Automatik — Zwangs-Untertitel funktionieren damit weiter, nur eben als
+Text im Direct Play.
 
 **🗂 Viele Dateien auf einmal:**
 Ganze Serienstaffel reinziehen, Regeln einmal festlegen (oder pro Datei
@@ -93,8 +110,9 @@ immer die Offline-Variante.
    und in einen beliebigen Ordner legen
    (keine Installation nötig).
 2. **Beim ersten Start** bietet Spurwerk an, die benötigten freien
-   Werkzeuge (MKVToolNix, FFmpeg — zusammen ca. 195 MB) automatisch
-   herunterzuladen. Ein Klick, einmalig, fertig.
+   Werkzeuge automatisch herunterzuladen: MKVToolNix und FFmpeg
+   (Pflicht) sowie dovi_tool (optional, für „DV/HDR → HDR10").
+   Ein Klick, einmalig, fertig.
 3. **MKV-Dateien ins Fenster ziehen.** Spurwerk analysiert sie, wendet
    dein Profil an (z. B. „Deutsch bevorzugt") und zeigt dir in Klartext,
    was passieren wird. Passt? **Start.**
@@ -140,6 +158,14 @@ Dolby Vision **Profil 5** hat kein HDR10-Fallback — ohne die DV-Daten
 wären die Farben kaputt. Spurwerk sperrt das und erklärt warum, statt
 eine unbrauchbare Datei zu erzeugen.
 
+**Warum springen Bild-Untertitel nach „DV/HDR → HDR10" nicht mehr automatisch an?**
+Weil genau das die Wiedergabe killen kann: Eine automatisch aktive
+PGS-Spur zwingt Player wie Jellyfin zum Einbrennen — der Server muss
+den kompletten 4K-Film transkodieren, und je nach Hardware startet der
+Film dann gar nicht. Die Bild-Untertitel bleiben vollständig in der
+Datei (im Player zuschaltbar); gibt es eine Textspur gleicher Sprache,
+übernimmt die die Automatik.
+
 **Welche Systemvoraussetzungen?**
 Windows 10/11 (64-bit). Die Werkzeuge lädt Spurwerk selbst.
 
@@ -156,12 +182,9 @@ ganzen Ordner, `Entf` entfernt die markierte Datei aus der Liste.
 ## Die Werkzeuge dahinter
 
 Spurwerk orchestriert bewährte freie Software: **MKVToolNix**
-(mkvtoolnix.download), **FFmpeg** (gyan.dev/BtbN) und — für die
-Dolby-Vision-Funktionen — **dovi_tool** (quietvoid). Alle unter
-GPL/Open-Source-Lizenzen. Spurwerk liefert sie nicht mit, sondern lädt
-sie auf Wunsch per Ein-Klick von den offiziellen Quellen, geprüft per
-SHA-256. Mehr Werkzeuge sind nicht nötig — auch DV → Profil 8.1 (MP4)
-läuft allein mit FFmpeg.
+(mkvtoolnix.download), **FFmpeg** (gyan.dev/BtbN) und **dovi_tool**
+(quietvoid) für „DV/HDR → HDR10". Spurwerk liefert sie nicht mit,
+sondern lädt sie auf Wunsch per Ein-Klick, geprüft per SHA-256.
 
 Der optionale Titelabgleich nutzt die **TMDb-API**, ist aber nicht von
 TMDb unterstützt oder zertifiziert.

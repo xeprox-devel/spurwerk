@@ -57,14 +57,14 @@ def describe(profile: RuleProfile) -> str:
     stereo = {
         "add": f"Mehrkanal → zusätzlich {fmt}-Kopie",
         "replace": f"Mehrkanal → durch {fmt} ersetzen",
-        "never": "keine Konvertierung (verlustfrei)",
+        "never": "keine Konvertierung (nur remuxen)",
     }[profile.stereo_policy]
 
     subs = {
-        "preferred": f"Subs: {langs}",
-        "forced_only": "Subs: nur forced",
-        "all": "Subs: alle",
-        "none": "Subs: keine",
+        "preferred": f"Untertitel: {langs}",
+        "forced_only": "Untertitel: nur erzwungene (forced)",
+        "all": "Untertitel: alle",
+        "none": "Untertitel: keine",
     }[profile.sub_policy]
 
     parts = [audio, stereo, subs]

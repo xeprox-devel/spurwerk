@@ -1,7 +1,7 @@
 """DV/HDR-Remux: Parser, Sperr-Logik, Kommandobau + End-to-End.
 
 Der End-to-End-Test nutzt film_dv.mkv (synthetisches DV 8.1 via
-dovi_tool inject-rpu) und prüft: nach Modus „hdr10" ist die DOVI-
+dovi_tool inject-rpu) und prüft: nach Modus „hdr10“ ist die DOVI-
 Signalisierung weg, HDR10 (PQ) bleibt, Audio bleibt 1:1.
 """
 
@@ -37,7 +37,6 @@ class TestParser:
         assert info.dv_profile == 7 and info.el_present and info.hdr10
         assert "Profil 7" in info.describe() and "BL+EL+RPU" in info.describe()
         assert info.hdr10_blocked_reason() is None
-        assert info.dv81_blocked_reason() is None
 
     def test_profil5_sperrt_hdr10(self):
         info = dv.parse_stream({
@@ -48,7 +47,6 @@ class TestParser:
                 "bl_present_flag": 1}],
         })
         assert "Profil 5" in info.hdr10_blocked_reason()
-        assert info.dv81_blocked_reason() is not None
 
     def test_kein_dv(self):
         info = dv.parse_stream({"codec_name": "hevc",
@@ -126,41 +124,45 @@ class TestMuxMitVideoErsatz:
         assert "--default-duration" not in cmd
 
 
-class TestMp4Kommando:
-    def test_dv_mp4_video_und_audio(self):
-        plan = build_plan(film_std(), profile_de(stereo_policy="never"))
-        cmd, warns = dv.build_ffmpeg_dv_mp4(
-            "ffmpeg", "C:/tmp/dv81.hevc", plan, {}, "out.mp4")
-        # Video mit DV-RPU-Filter, dvh1-Tag
-        assert "dovi_rpu" in cmd and "-strict" in cmd
-        assert cmd[cmd.index("-tag:v") + 1] == "dvh1"
-        # AC3 (5.1 de) ist MP4-tauglich → copy, keine Warnung
-        assert "-map" in cmd and "1:a:0" in cmd
-        assert warns == []
-        assert cmd[-1] == "out.mp4"
-        assert cmd[cmd.index("-map_chapters") + 1] == "1"
+class TestEndungsNormalisierung:
+    """Die Ausgabe ist immer eine MKV — eine fremde Endung (z. B. manuell
+    gesetztes „X.mp4“) wird VOR der Kollisionsprüfung auf „.mkv“
+    normalisiert, damit die Prüfung die echten Ausgabepfade sieht."""
 
-    def test_incompatible_audio_wird_transkodiert(self):
-        from tests.helpers import media, track
-        m = media(track(0, "video", codec="V_MPEGH/ISO/HEVC"),
-                  track(1, "audio", "de", codec="A_TRUEHD", channels=8))
-        plan = build_plan(m, profile_de(stereo_policy="never"))
-        cmd, warns = dv.build_ffmpeg_dv_mp4(
-            "ffmpeg", "C:/tmp/v.hevc", plan, {}, "out.mp4")
-        assert "eac3" in cmd                        # TrueHD → E-AC3
-        assert any("nicht MP4-tauglich" in w for w in warns)
-
-    def test_bild_untertitel_werden_weggelassen(self):
+    def _plan(self, path: str, out: str, mode: str):
         from tests.helpers import media, track
         m = media(track(0, "video", codec="V_MPEGH/ISO/HEVC"),
                   track(1, "audio", "de", codec="A_AC3", channels=6),
-                  track(2, "subtitles", "de", codec="S_HDMV/PGS"))
-        plan = build_plan(m, profile_de(sub_policy="all",
-                                        stereo_policy="never"))
-        cmd, warns = dv.build_ffmpeg_dv_mp4(
-            "ffmpeg", "C:/tmp/v.hevc", plan, {}, "out.mp4")
-        assert "mov_text" not in cmd                # PGS nicht muxbar
-        assert any("nicht MP4-tauglich" in w for w in warns)
+                  path=path)
+        plan = build_plan(m, profile_de(stereo_policy="never"))
+        plan.video_mode = mode
+        plan.output_path = out
+        return plan
+
+    def test_fremde_endung_wird_mkv(self):
+        plan = self._plan("C:/in/a.mkv", "C:/out/Film.mp4",
+                          dv.VIDEO_MODE_COPY)
+        JobRunner.normalize_output_extension(plan)
+        assert plan.output_path.endswith(".mkv")
+
+    def test_hdr10_modus_bleibt_mkv(self):
+        plan = self._plan("C:/in/a.mkv", "C:/out/Film.mkv",
+                          dv.VIDEO_MODE_HDR10)
+        JobRunner.normalize_output_extension(plan)
+        assert plan.output_path == "C:/out/Film.mkv"   # unverändert
+
+    def test_kollision_nach_normalisierung_erkannt(self):
+        import queue as q
+        from core.model import FileStatus
+        a = self._plan("C:/in/a.mkv", "C:/out/Film.mkv", dv.VIDEO_MODE_COPY)
+        b = self._plan("C:/in/b.mkv", "C:/out/Film.mp4", dv.VIDEO_MODE_COPY)
+        runner = JobRunner({}, q.Queue())
+        for plan in (a, b):
+            runner.normalize_output_extension(plan)
+        runner._mark_output_collisions([a, b])
+        assert b.output_path.endswith(".mkv")   # „.mp4“ wurde normalisiert
+        assert b.status is FileStatus.ERROR     # Kollision erkannt
+        assert a.status is not FileStatus.ERROR
 
 
 needs_dv_stack = pytest.mark.skipif(
@@ -210,45 +212,3 @@ class TestEndToEnd:
         assert runner.run([plan]) == 0
         assert "Profil 5" in plan.error
         assert not Path(plan.output_path).exists()
-
-    def test_dv81_mp4_mit_ffmpeg(self, tmp_path):
-        """Modus A ohne MP4Box: DV-8.1-MP4 mit gültiger dvvC-Box, Audio drin,
-        Video bitgenau (nur Metadaten/Container geändert)."""
-        media = scan_file(TOOLS["mkvmerge"], str(DV_FIXTURE))
-        plan = build_plan(media, profile_de(stereo_policy="never"))
-        plan.dv = dv.analyze(TOOLS["ffprobe"], str(DV_FIXTURE))
-        plan.video_mode = dv.VIDEO_MODE_DV81
-        plan.output_path = str(tmp_path / "out [DV8.1].mp4")
-
-        runner = JobRunner(TOOLS, queue.Queue())
-        assert runner.run([plan]) == 1, plan.error
-
-        out = dv.analyze(TOOLS["ffprobe"], plan.output_path)
-        assert out.is_hevc
-        assert out.dv_profile == 8          # dvvC-Box vorhanden, Profil 8
-        assert not out.el_present
-        # Audio ist im MP4 gelandet
-        import json
-        import subprocess
-        data = json.loads(subprocess.run(
-            [TOOLS["ffprobe"], "-v", "quiet", "-print_format", "json",
-             "-show_streams", plan.output_path],
-            capture_output=True, text=True).stdout)
-        kinds = [s["codec_type"] for s in data["streams"]]
-        assert "video" in kinds and "audio" in kinds
-
-    def test_dv81_erzwingt_mp4_endung(self, tmp_path):
-        """Regression: dv81 mit fälschlich .mkv-Ausgabepfad (z. B. nach
-        Profilwechsel) muss trotzdem ein gültiges MP4 erzeugen — der
-        dvh1-Tag scheitert sonst im Matroska-Muxer."""
-        media = scan_file(TOOLS["mkvmerge"], str(DV_FIXTURE))
-        plan = build_plan(media, profile_de(stereo_policy="never"))
-        plan.dv = dv.analyze(TOOLS["ffprobe"], str(DV_FIXTURE))
-        plan.video_mode = dv.VIDEO_MODE_DV81
-        plan.output_path = str(tmp_path / "falsch.mkv")   # falsche Endung!
-
-        runner = JobRunner(TOOLS, queue.Queue())
-        assert runner.run([plan]) == 1, plan.error
-        assert plan.output_path.endswith(".mp4")          # korrigiert
-        assert Path(plan.output_path).exists()
-        assert not (tmp_path / "falsch.mkv").exists()

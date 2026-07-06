@@ -1,8 +1,8 @@
-"""Spurwerk-Theme „Nachtviolett" + Checkbox-Grafiken.
+"""Spurwerk-Theme „Nachtcyan“ + Checkbox-Grafiken.
 
 Eine Farbquelle für alles: ttkbootstrap-Widgets, Checkbox-Images (Pillow),
-Log-Tags und Status-Chips. Farbsemantik: Violett ist exklusiv für „neu
-erzeugt" reserviert, Grün = behalten/verlustfrei, Rot = entfernen.
+Log-Tags und Status-Chips. Farbsemantik: Cyan ist exklusiv für „neu
+erzeugt“ reserviert, Grün = behalten/verlustfrei, Rot = entfernen.
 """
 
 from __future__ import annotations
@@ -21,10 +21,13 @@ THEME_NAME = "spurwerk-dark"
 # „Nachtcyan“: Akzent #22d3ee von ricardo-rehfeldt.de (--accent), Grund als
 # cyan-getöntes Nachtblau statt neutralem Grau; Grün ist ein echtes Grün.
 COLORS = {
-    "primary":  "#22d3ee",   # Akzent-Cyan — exklusiv für „neu erzeugt"
+    "primary":  "#22d3ee",   # Akzent-Cyan — exklusiv für „neu erzeugt“
     "secondary": "#44545e",
     "success":  "#22c55e",   # behalten / verlustfrei (richtiges Grün)
-    "info":     "#818cf8",   # Indigo (accent-3 der Webseite)
+    "info":     "#22d3ee",   # bewusst = Akzent-Cyan: Lila/Indigo kommt in
+                             # Spurwerk nicht vor (Nutzerentscheid) — auch
+                             # ttkbootstrap-interne info-Verwendungen
+                             # (Link-Hover, Fokusring) landen so auf der Linie
     "warning":  "#f59e0b",   # Amber wie auf der Webseite
     "danger":   "#ff5370",   # entfernen / Fehler
     "light":    "#a9bac4",
@@ -41,7 +44,10 @@ COLORS = {
 
 # Zusatzfarben außerhalb des ttkbootstrap-Schemas
 MUTED = "#5f717c"        # abgewählte Spuren, Nebentexte (von der Webseite)
-SURFACE_ALT = "#18262f"  # Zeilentrenner
+
+# Dunkle Tinte auf der jeweiligen Füllfarbe (Checkbox-Glyphen)
+INK_ON_SUCCESS = "#0b2c22"   # Häkchen auf Grün
+INK_ON_PRIMARY = "#083344"   # Plus auf Cyan
 
 
 def register(style: Style) -> None:
@@ -53,7 +59,7 @@ def register(style: Style) -> None:
 def make_check_images(master: tk.Misc) -> dict[str, PhotoImage]:
     """Checkbox-Grafiken für die Spurtabelle, DPI-skaliert und theme-genau.
 
-    Zustände: on (grün ✓ = behalten), stereo (violett + = neu erzeugt),
+    Zustände: on (grün ✓ = behalten), stereo (cyan + = neu erzeugt),
     off (leer = abgewählt). Referenzen müssen gehalten werden!
     """
     size = utility.scale_size(master, 16)
@@ -76,13 +82,13 @@ def make_check_images(master: tk.Misc) -> dict[str, PhotoImage]:
 
     img, draw = base(COLORS["success"])
     draw.line([(s * .26, s * .52), (s * .44, s * .70), (s * .76, s * .30)],
-              fill="#0b2c22", width=2 * scale)
+              fill=INK_ON_SUCCESS, width=2 * scale)
     images["on"] = finish(img)
 
     img, draw = base(COLORS["primary"])
-    draw.line([(s * .5, s * .28), (s * .5, s * .72)], fill="#083344",
+    draw.line([(s * .5, s * .28), (s * .5, s * .72)], fill=INK_ON_PRIMARY,
               width=2 * scale)
-    draw.line([(s * .28, s * .5), (s * .72, s * .5)], fill="#083344",
+    draw.line([(s * .28, s * .5), (s * .72, s * .5)], fill=INK_ON_PRIMARY,
               width=2 * scale)
     images["stereo"] = finish(img)
 

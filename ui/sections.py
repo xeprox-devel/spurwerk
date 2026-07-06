@@ -21,9 +21,13 @@ class CollapsibleSection(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
+        # takefocus=False: kein gepunkteter Fokusrahmen nach dem Klick —
+        # die Kopfzeile ist reine Maus-Bedienung. Hover-Farbe kommt aus
+        # ttkbootstraps „info“, das in theme.py bewusst dem Akzent-Cyan
+        # entspricht.
         self._header = ttk.Button(
             self, text=self._header_text(), bootstyle="secondary-link",
-            command=self.toggle, cursor="hand2")
+            command=self.toggle, cursor="hand2", takefocus=False)
         self._header.grid(row=0, column=0, sticky="w")
 
         self.body = ttk.Frame(self)

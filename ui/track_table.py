@@ -13,8 +13,9 @@ from typing import Callable
 import ttkbootstrap as ttk
 from ttkbootstrap import utility
 
+from core.dv import VIDEO_MODE_COPY, VIDEO_MODE_HDR10
 from core.langs import display_name
-from core.model import Action, FilePlan, Origin, Track
+from core.model import Action, FilePlan, Origin, StereoSettings, Track
 
 from . import theme
 
@@ -38,7 +39,8 @@ class TrackTable(ttk.Frame):
         self.on_change = on_change
         self.plan: FilePlan | None = None
         self.locked = False   # während eines Laufs sind Pläne eingefroren
-        self.convert_label = "Stereo AC3"   # z. B. "E-AC3 5.1", vom Panel gesetzt
+        # z. B. „AC3 2.0“ — Startwert aus dem Default, vom Panel überschrieben
+        self.convert_label = StereoSettings().short_label()
         self.dovi_ok = False    # dovi_tool verfügbar (vom Hauptfenster gesetzt)
         self._images = theme.make_check_images(self)   # Referenzen halten!
 
@@ -110,8 +112,7 @@ class TrackTable(ttk.Frame):
             Action.DROP: "—",
         }[action]
 
-    _VIDEO_MODE_LABELS = {"hdr10": "DV entfernen → HDR10",
-                          "dv81": "DV → 8.1 (MP4)"}
+    _VIDEO_MODE_LABELS = {VIDEO_MODE_HDR10: "DV/HDR → HDR10"}
 
     def _is_first_video(self, track: Track) -> bool:
         videos = self.plan.media.by_type("video")
@@ -120,7 +121,7 @@ class TrackTable(ttk.Frame):
     def _row_values(self, track: Track) -> tuple:
         dec = self.plan.decisions[track.id]
         if (track.type == "video" and dec.action.keeps_original
-                and self.plan.video_mode != "copy"
+                and self.plan.video_mode != VIDEO_MODE_COPY
                 and self._is_first_video(track)):
             action = self._VIDEO_MODE_LABELS.get(self.plan.video_mode,
                                                  "Kopieren")
@@ -246,39 +247,25 @@ class TrackTable(ttk.Frame):
             return "●  " if active else "    "
 
         menu.add_command(
-            label=marker(dec.action is Action.COPY and mode == "copy")
+            label=marker(dec.action is Action.COPY and mode == VIDEO_MODE_COPY)
             + "Kopieren (verlustfrei)",
-            command=lambda: self._set_video_mode(track, "copy"))
+            command=lambda: self._set_video_mode(track, VIDEO_MODE_COPY))
 
-        # DV entfernen → HDR10
+        # DV/HDR entfernen → HDR10 (der einzige DV-Modus)
         if dvi is None:
             reason = "DV-Analyse fehlt — FFmpeg über ⚙ neu laden (bringt ffprobe mit)"
         elif not self.dovi_ok:
             reason = dvi.hdr10_blocked_reason() or "dovi_tool fehlt (⚙)"
         else:
             reason = dvi.hdr10_blocked_reason()
-        label = marker(mode == "hdr10") + "DV entfernen → HDR10 (verlustfrei)"
+        label = (marker(mode == VIDEO_MODE_HDR10)
+                 + "DV/HDR entfernen → HDR10 — bei Kompatibilitätsproblemen")
         if reason:
             menu.add_command(label=f"{label}   — {reason}", state="disabled")
         else:
             menu.add_command(
                 label=label,
-                command=lambda: self._set_video_mode(track, "hdr10"))
-
-        # DV → 8.1 (MP4) — Modus A (nur ffmpeg+dovi_tool, kein MP4Box nötig)
-        if dvi is None:
-            reason81 = "DV-Analyse fehlt — FFmpeg über ⚙ neu laden"
-        else:
-            reason81 = (dvi.dv81_blocked_reason()
-                        or ("dovi_tool fehlt (⚙)" if not self.dovi_ok else None))
-        label81 = marker(mode == "dv81") + "DV → Profil 8.1 (MP4)"
-        if reason81:
-            menu.add_command(label=f"{label81}   — {reason81}",
-                             state="disabled")
-        else:
-            menu.add_command(
-                label=label81,
-                command=lambda: self._set_video_mode(track, "dv81"))
+                command=lambda: self._set_video_mode(track, VIDEO_MODE_HDR10))
 
         menu.add_separator()
         menu.add_command(label=marker(dec.action is Action.DROP) + "Entfernen",
@@ -290,7 +277,7 @@ class TrackTable(ttk.Frame):
         self._changed()
 
     def _drop_video(self, track: Track) -> None:
-        self.plan.video_mode = "copy"   # Modus ist ohne Videospur sinnlos
+        self.plan.video_mode = VIDEO_MODE_COPY   # Modus ist ohne Videospur sinnlos
         self._set_action(track, Action.DROP)
 
     def _set_action(self, track: Track, action: Action) -> None:

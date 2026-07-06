@@ -1,9 +1,11 @@
 """Tool-Manager + Erststart-Onboarding.
 
 Der Erststart ohne Tools ist keine Fehlermeldung, sondern ein geführter
-Weg: ein Klick lädt MKVToolNix + FFmpeg (mit SHA-256-Prüfung) in tools/,
-alternativ wählt man vorhandene EXEs von Hand. Reiner Remux funktioniert
-schon mit MKVToolNix allein — FFmpeg wird nur für Stereo gebraucht.
+Weg: ein Klick lädt alle fehlenden Werkzeuge (MKVToolNix + FFmpeg, dazu
+das optionale dovi_tool) mit SHA-256-Prüfung in tools/, alternativ wählt
+man vorhandene EXEs von Hand. Reiner Remux funktioniert schon mit
+MKVToolNix allein — FFmpeg wird nur für Audio-Konvertierung gebraucht,
+dovi_tool nur für „DV/HDR → HDR10“.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ _TOOL_TITLES = {
     "mkvtoolnix": ("MKVToolNix", "Analyse & verlustfreies Muxen — Pflicht"),
     "ffmpeg": ("FFmpeg", "Audio-Konvertierung & DV-Analyse (ffprobe)"),
     "dovi_tool": ("dovi_tool",
-                  "Dolby-Vision-Remux (DV entfernen & DV→8.1-MP4) — optional"),
+                  "„DV/HDR → HDR10“ (Dolby-Vision-Daten entfernen) — optional"),
 }
 _TOOL_EXES = {"mkvtoolnix": "mkvmerge", "ffmpeg": "ffmpeg",
               "dovi_tool": "dovi_tool"}
@@ -50,6 +52,8 @@ class ToolManagerDialog(ttk.Toplevel):
 
         self._dot_ok = theme.make_status_dot(self, theme.COLORS["success"])
         self._dot_bad = theme.make_status_dot(self, theme.COLORS["danger"])
+        # neutraler Punkt für „noch ungeprüft“ — Rot erst bei echtem Befund
+        self._dot_wait = theme.make_status_dot(self, theme.MUTED)
 
         body = ttk.Frame(self, padding=14)
         body.pack(fill="both", expand=True)
@@ -68,18 +72,20 @@ class ToolManagerDialog(ttk.Toplevel):
         bar.grid(row=9, column=0, sticky="ew", pady=(12, 0))
         bar.columnconfigure(0, weight=1)
         self.dl_all_btn = ttk.Button(
-            bar, text="⬇  Fehlende Tools herunterladen", bootstyle="primary",
+            bar, text="⬇  Fehlende Werkzeuge herunterladen",
+            bootstyle="primary",
             command=lambda: self._download(only_missing=True))
         self.dl_all_btn.grid(row=0, column=0, sticky="w")
-        ttk.Button(bar, text="Download-Seiten im Browser",
+        ttk.Button(bar, text="Download-Seiten im Browser "
+                             f"({len(downloader.DOWNLOAD_PAGES)} Tabs)",
                    bootstyle="secondary-link",
                    command=self._open_pages).grid(row=0, column=1, padx=6)
         ttk.Button(bar, text="Schließen", bootstyle="secondary-outline",
                    command=self._close).grid(row=0, column=2)
 
-        note = ("Freie GPL-Software: MKVToolNix (mkvtoolnix.download) und "
-                "FFmpeg (gyan.dev / BtbN).\nDownloads werden per SHA-256 "
-                "geprüft und nach tools/ entpackt.")
+        note = ("Freie Software: MKVToolNix + FFmpeg (GPL), dovi_tool (MIT).\n"
+                "Downloads werden per SHA-256 geprüft und nach tools/ "
+                "entpackt.")
         ttk.Label(body, text=note, foreground=theme.MUTED,
                   justify="left").grid(row=10, column=0, sticky="w",
                                        pady=(10, 0))
@@ -97,7 +103,7 @@ class ToolManagerDialog(ttk.Toplevel):
         frame.grid(row=index, column=0, sticky="ew", pady=(0, 8))
         frame.columnconfigure(1, weight=1)
 
-        status = ttk.Label(frame, text="…", image=self._dot_bad,
+        status = ttk.Label(frame, text="…", image=self._dot_wait,
                            compound="left")
         status.grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(frame, text=hint, foreground=theme.MUTED
@@ -158,8 +164,7 @@ class ToolManagerDialog(ttk.Toplevel):
             return False
 
         return [k for k in self.rows
-                if k in downloader.DOWNLOADERS   # mp4box: nur manueller Pfad
-                and incomplete(k)]
+                if k in downloader.DOWNLOADERS and incomplete(k)]
 
     # ── Aktionen ──────────────────────────────────────────────────────────
 
@@ -249,7 +254,7 @@ class ToolManagerDialog(ttk.Toplevel):
                             foreground=theme.COLORS["danger"])
                     else:
                         self.step_label.configure(
-                            text="Fertig — Tools sind einsatzbereit.",
+                            text="Fertig — Werkzeuge sind einsatzbereit.",
                             foreground=theme.COLORS["success"])
                     self._reprobe()
         except queue.Empty:
@@ -285,16 +290,23 @@ class OnboardingCard(ttk.Frame):
         ttk.Label(self, text="Willkommen bei Spurwerk!",
                   font=("Segoe UI", 14, "bold"), bootstyle="inverse-dark",
                   anchor="center").grid(row=0, column=0, pady=(4, 6))
+        # Bewusste Vereinfachung: FFmpeg wird hier als Pflicht kommuniziert,
+        # weil tools.REQUIRED und die Header-Chips es so führen — technisch
+        # erzwingt der Start es nur bei anstehender Audio-Konvertierung
+        # (siehe Modul-Docstring).
         ttk.Label(
             self, bootstyle="inverse-dark", foreground=theme.MUTED,
             anchor="center", justify="center",
-            text=("Zum Arbeiten braucht die App zwei freie Open-Source-"
-                  "Werkzeuge (GPL),\ndie nicht mitgeliefert werden: "
-                  "MKVToolNix und FFmpeg."),
+            text=("Zum Arbeiten braucht die App freie Open-Source-Werkzeuge, "
+                  "die nicht mitgeliefert werden:\nMKVToolNix und FFmpeg "
+                  "(Pflicht) sowie dovi_tool (optional, für "
+                  "„DV/HDR → HDR10“).\nDer Download holt alles Fehlende "
+                  "auf einmal — SHA-256-geprüft, nach tools/."),
         ).grid(row=1, column=0, pady=(0, 14))
-        ttk.Button(self, text="⬇  Tools jetzt herunterladen  (~195 MB, einmalig)",
+        ttk.Button(self, text="⬇  Werkzeuge jetzt herunterladen  (einmalig)",
                    bootstyle="primary", command=on_download
                    ).grid(row=2, column=0, ipady=4, ipadx=10)
-        ttk.Button(self, text="Ich habe die Tools schon — Pfade selbst wählen …",
+        ttk.Button(self,
+                   text="Ich habe die Werkzeuge schon — Pfade selbst wählen …",
                    bootstyle="secondary-link", command=on_manual
                    ).grid(row=3, column=0, pady=(8, 4))

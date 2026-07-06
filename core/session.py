@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, fields
 
+from .dv import VIDEO_MODE_COPY, VIDEO_MODE_HDR10
 from .model import Action, FilePlan, Origin, StereoSettings
 
 
@@ -47,7 +48,10 @@ def restore_plan(plan: FilePlan, job: dict) -> None:
             if tid in valid_ids:
                 plan.set_action(tid, Action(action), Origin.MANUAL)
 
-        plan.video_mode = job.get("video_mode", "copy")
+        # Unbekannte Modi (z. B. „dv81“ aus älteren Ständen) → sicher „copy“
+        mode = job.get("video_mode", VIDEO_MODE_COPY)
+        plan.video_mode = (mode if mode in (VIDEO_MODE_COPY, VIDEO_MODE_HDR10)
+                           else VIDEO_MODE_COPY)
         plan.canonical_name = job.get("canonical_name", "")
 
         src = job.get("default_audio_source")

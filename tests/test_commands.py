@@ -178,3 +178,89 @@ class TestKanalziele:
         t2 = track(1, "audio", "de", channels=2)
         assert effective_channels(t2, StereoSettings(codec="aac",
                                                      channels="5.1")) == 2
+
+
+class TestUntertitelAutomatik:
+    """Kompatibilitätsmodus „DV/HDR → HDR10": Bild-Untertitel dürfen nie
+    automatisch anspringen (Jellyfin müsste sonst einbrennen = Zwangs-
+    Transkodierung, Wiedergabe startet je nach Server nicht) — die
+    Automatik erbt die passendste Textspur gleicher Sprache."""
+
+    @staticmethod
+    def _obsession_like():
+        """Nachbau des Praxisfalls: PGS default+forced, PGS forced,
+        Text forced + Text voll — alle Deutsch."""
+        return media(
+            track(0, "video", codec="V_MPEGH/ISO/HEVC"),
+            track(1, "audio", "de", codec="A_EAC3", channels=6,
+                  default=True),
+            track(3, "subtitles", "de", codec="S_HDMV/PGS",
+                  default=True, forced=True),
+            track(4, "subtitles", "de", codec="S_HDMV/PGS", forced=True),
+            track(5, "subtitles", "de", codec="S_TEXT/UTF8", forced=True),
+            track(6, "subtitles", "de", codec="S_TEXT/UTF8"),
+        )
+
+    def test_copy_modus_laesst_alles_unangetastet(self):
+        from core import dv
+        from core.commands import (subtitle_automation_note,
+                                   subtitle_flag_overrides)
+        plan = build_plan(self._obsession_like(),
+                          profile_de(sub_policy="all", stereo_policy="never"))
+        plan.video_mode = dv.VIDEO_MODE_COPY
+        assert subtitle_flag_overrides(plan) == {}
+        assert subtitle_automation_note(plan) is None
+        cmd = build_mkvmerge_mux("mkvmerge", plan, StereoSettings(), {})
+        assert "--forced-display-flag" not in cmd
+
+    def test_hdr10_pgs_wird_entschaerft_textspur_erbt(self):
+        from core import dv
+        from core.commands import (subtitle_automation_note,
+                                   subtitle_flag_overrides)
+        plan = build_plan(self._obsession_like(),
+                          profile_de(sub_policy="all", stereo_policy="never"))
+        plan.video_mode = dv.VIDEO_MODE_HDR10
+        overrides = subtitle_flag_overrides(plan)
+        assert overrides[3] == (False, False)   # PGS default+forced → aus
+        assert overrides[4] == (False, False)   # PGS forced → aus
+        assert overrides[5] == (True, True)     # Text-forced erbt Default
+        assert 6 not in overrides               # Voll-Text bleibt unberührt
+
+        cmd = build_mkvmerge_mux("mkvmerge", plan, StereoSettings(), {},
+                                 video_file="C:/tmp/clean.hevc")
+        joined = " ".join(cmd)
+        assert "--default-track-flag 3:no" in joined
+        assert "--forced-display-flag 3:no" in joined
+        assert "--forced-display-flag 4:no" in joined
+        assert "--default-track-flag 5:yes" in joined
+        assert "--forced-display-flag 5:yes" in joined
+        assert "Textspur übernimmt" in subtitle_automation_note(plan)
+
+    def test_hdr10_pgs_ohne_textersatz(self):
+        from core import dv
+        from core.commands import (subtitle_automation_note,
+                                   subtitle_flag_overrides)
+        m = media(
+            track(0, "video", codec="V_MPEGH/ISO/HEVC"),
+            track(1, "audio", "de", codec="A_AC3", channels=6, default=True),
+            track(2, "subtitles", "de", codec="S_HDMV/PGS",
+                  default=True, forced=True),
+        )
+        plan = build_plan(m, profile_de(sub_policy="all",
+                                        stereo_policy="never"))
+        plan.video_mode = dv.VIDEO_MODE_HDR10
+        assert subtitle_flag_overrides(plan) == {2: (False, False)}
+        assert "im Player zuschalten" in subtitle_automation_note(plan)
+
+    def test_hdr10_nur_textspuren_bleiben_1zu1(self):
+        from core import dv
+        from core.commands import (subtitle_automation_note,
+                                   subtitle_flag_overrides)
+        plan = build_plan(film_std(), profile_de(sub_policy="all",
+                                                 stereo_policy="never"))
+        plan.video_mode = dv.VIDEO_MODE_HDR10
+        assert subtitle_flag_overrides(plan) == {}
+        assert subtitle_automation_note(plan) is None
+        cmd = build_mkvmerge_mux("mkvmerge", plan, StereoSettings(), {},
+                                 video_file="C:/tmp/clean.hevc")
+        assert "--forced-display-flag" not in cmd

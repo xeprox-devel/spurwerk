@@ -2,7 +2,7 @@
 
 Aufruf:  python assets/make_icon.py
 
-Design (Brand-Sheet „Nachtcyan"): abgerundetes nachtblaues Quadrat mit
+Design (Brand-Sheet „Nachtcyan“): abgerundetes nachtblaues Quadrat mit
 Gleisplan — eine gedimmte Spur, eine helle Spur, und am Weichenpunkt
 zweigt die Cyan-Spur ab (= die neu erzeugte Spur, das eine Ding, das nur
 Spurwerk macht). Jede Größe wird einzeln gerendert (16 px braucht andere
@@ -18,10 +18,12 @@ from PIL import Image, ImageDraw
 OUT = Path(__file__).resolve().parents[1] / "spurwerk.ico"
 SIZES = [16, 24, 32, 48, 64, 128, 256]
 
-BG = "#0d151a"
-MUTED = "#44545e"
-LIGHT = "#e6edf2"
-CYAN = "#22d3ee"
+# Farben spiegeln ui/theme.py COLORS — pro Zeile der zugehörige Schlüssel.
+# (Bewusst KEIN theme-Import: das Skript bleibt standalone lauffähig.)
+BG = "#0d151a"      # COLORS["bg"]
+STEEL = "#44545e"   # COLORS["secondary"] — nicht theme.MUTED (#5f717c)!
+LIGHT = "#e6edf2"   # COLORS["fg"]
+CYAN = "#22d3ee"    # COLORS["primary"]
 
 
 def _bezier(p0, p1, p2, p3, steps: int = 32) -> list[tuple[float, float]]:
@@ -57,7 +59,7 @@ def render(size: int) -> Image.Image:
     y_top, y_bot = s * 0.36, s * 0.64
     x0, x1 = s * 0.18, s * 0.82
 
-    _round_line(draw, [(x0, y_top), (x1, y_top)], MUTED, width)
+    _round_line(draw, [(x0, y_top), (x1, y_top)], STEEL, width)
     _round_line(draw, [(x0, y_bot), (x1, y_bot)], LIGHT, width)
 
     branch_start = (s * 0.38, y_bot)

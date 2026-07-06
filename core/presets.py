@@ -1,6 +1,6 @@
 """Codec- und Downmix-Presets.
 
-Hinweis zum Altcode: Der frühere „native AC3-Downmix" über `-dmix_mode loro`
+Hinweis zum Altcode: Der frühere „native AC3-Downmix“ über `-dmix_mode loro`
 setzte nur Downmix-*Metadaten* in den Bitstream und mischte ohne `-ac 2`
 nichts herunter (Ausgabe blieb 5.1). Deshalb nutzen hier alle Codecs
 einheitlich den Pan-Filter.

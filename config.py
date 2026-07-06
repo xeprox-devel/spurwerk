@@ -35,6 +35,7 @@ class AppConfig:
     tmdb_key: str = ""                         # TMDb-API-Key (v3)
     check_updates: bool = True                 # beim Start nach Updates sehen
     window_geometry: str = ""                  # zuletzt genutzte Fenstergröße/-position
+    window_zoomed: bool = False                # Fenster war maximiert
     session: list[dict] = field(default_factory=list)  # offene Jobs
 
     def all_profiles(self) -> list[RuleProfile]:
@@ -71,6 +72,7 @@ def save(cfg: AppConfig) -> None:
         "tmdb_key": cfg.tmdb_key,
         "check_updates": cfg.check_updates,
         "window_geometry": cfg.window_geometry,
+        "window_zoomed": cfg.window_zoomed,
         "session": cfg.session,
         "user_profiles": [_profile_to_dict(p) for p in cfg.user_profiles],
     }
@@ -114,6 +116,7 @@ def _from_dict(data: dict) -> AppConfig:
         tmdb_key=data.get("tmdb_key", ""),
         check_updates=bool(data.get("check_updates", True)),
         window_geometry=str(data.get("window_geometry", "")),
+        window_zoomed=bool(data.get("window_zoomed", False)),
         session=list(data.get("session", [])),
         user_profiles=profiles,
     )

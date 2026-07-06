@@ -1,4 +1,4 @@
-"""„Über Spurwerk" — Identität, Entwickler-Zuordnung und die Attributionen
+"""„Über Spurwerk“ — Identität, Entwickler-Zuordnung und die Attributionen
 (GPL-Werkzeuge + TMDb), die die Hauptoberfläche sauber halten."""
 
 from __future__ import annotations
@@ -46,7 +46,10 @@ class AboutDialog(ttk.Toplevel):
                   font=("Segoe UI", 9, "bold")).pack(anchor="w")
         for tool, src in (("MKVToolNix", "mkvtoolnix.download"),
                           ("FFmpeg", "gyan.dev / BtbN"),
-                          ("dovi_tool", "quietvoid")):
+                          ("dovi_tool", "quietvoid"),
+                          ("ttkbootstrap", "israel-dryer"),
+                          ("Pillow", "python-pillow"),
+                          ("tkinterdnd2", "pmgagne / petasis")):
             ttk.Label(credits, text=f"   •  {tool}  ·  {src}",
                       foreground=theme.MUTED).pack(anchor="w")
         ttk.Label(credits,

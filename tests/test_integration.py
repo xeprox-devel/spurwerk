@@ -2,7 +2,7 @@
 
 Verifiziert die Ausgabe per erneutem `mkvmerge -J`-Scan — insbesondere
 `channels == 2` auf jeder neuen Stereospur (Regressionsschutz gegen den
-Altcode-Bug, bei dem „Stereo" real 5.1 blieb) und den erhaltenen
+Altcode-Bug, bei dem „Stereo“ real 5.1 blieb) und den erhaltenen
 Startversatz (A/V-Sync).
 """
 

@@ -44,7 +44,7 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
             self.TkdndVersion = TkinterDnD._require(self)
 
         self.cfg = appconfig.load()
-        self.main = MainWindow(self, self.cfg)
+        self.main = MainWindow(self, self.cfg, dnd_ok=DND_AVAILABLE)
         self.main.pack(fill="both", expand=True)
 
         if DND_AVAILABLE:
@@ -60,9 +60,9 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
     def _first_layout(self) -> None:
         from ui.geometry import clamp_geometry
         self.update_idletasks()
-        saved = clamp_geometry(self.cfg.window_geometry,
-                               self.winfo_screenwidth(),
-                               self.winfo_screenheight())
+        vx, vy, vw, vh = self._virtual_screen()
+        saved = clamp_geometry(self.cfg.window_geometry, vw, vh,
+                               screen_x=vx, screen_y=vy)
         if saved:
             # Gemerkte Größe/Position gewinnt über die Auto-Größe.
             self.geometry(saved)
@@ -72,7 +72,30 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
         else:
             self.autosize(allow_shrink=True)
             self.place_window_center()
+        if self.cfg.window_zoomed:
+            # Maximiert wiederherstellen — Auto-Size bleibt dabei außen vor
+            self._user_resized = True
+            self._auto_size = None
+            self.minsize(900, 420)
+            self.state("zoomed")
         self._mapped = True
+
+    def _virtual_screen(self) -> tuple[int, int, int, int]:
+        """Virtueller Desktop (alle Monitore): (x, y, w, h). Der Ursprung
+        kann negativ sein (Zweitmonitor links/oben vom Primärmonitor).
+        Fallback: Primärmonitor mit Ursprung (0, 0)."""
+        import sys
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                metrics = ctypes.windll.user32.GetSystemMetrics
+                x, y = metrics(76), metrics(77)   # SM_X/YVIRTUALSCREEN
+                w, h = metrics(78), metrics(79)   # SM_CX/CYVIRTUALSCREEN
+                if w > 0 and h > 0:
+                    return x, y, w, h
+            except OSError:
+                pass
+        return 0, 0, self.winfo_screenwidth(), self.winfo_screenheight()
 
     def autosize(self, allow_shrink: bool = False) -> None:
         """Fenster an den Inhalt anpassen — wächst automatisch, schrumpft nur

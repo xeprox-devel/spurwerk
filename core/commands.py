@@ -6,9 +6,62 @@ in tests/test_commands.py verifizieren jede Kommandoform.
 
 from __future__ import annotations
 
-from .dv import default_duration_arg
+from .dv import VIDEO_MODE_HDR10, default_duration_arg
 from .model import FilePlan, StereoSettings, Track
 from .presets import CHANNEL_TARGETS, DOWNMIX_PRESETS, OUTPUT_CODECS
+
+# Bild-Untertitel: können von Playern nicht als Text gerendert werden —
+# eine automatisch aktive Bild-Spur zwingt Jellyfin & Co. zum Einbrennen
+# (= Transkodierung des kompletten Videos; die Wiedergabe startet je nach
+# Server gar nicht erst).
+IMAGE_SUB_CODECS = {"S_HDMV/PGS", "S_VOBSUB", "S_DVBSUB"}
+
+
+def subtitle_flag_overrides(plan: FilePlan) -> dict[int, tuple[bool, bool]]:
+    """Kompatibilitätsmodus „DV/HDR → HDR10“: Untertitel-Automatik so
+    setzen, dass die Ausgabe überall im Direct Play startet.
+
+    Regel: Bild-Untertitel (PGS/VobSub) verlieren Default- und
+    Forced-Flag — sie bleiben vollständig in der Datei, springen aber
+    nie automatisch an. Trug eine dieser Spuren das Default-Flag,
+    erbt es die passendste Textspur gleicher Sprache (bevorzugt mit
+    gleicher Forced-Rolle) — so bleibt z. B. die Forced-Automatik über
+    die Text-Ausgabe erhalten.
+
+    Rückgabe: Track-ID → (default, forced); leer außerhalb des Modus.
+    """
+    if plan.video_mode != VIDEO_MODE_HDR10:
+        return {}
+    kept = [plan.media.track(tid) for tid in plan.kept_ids("subtitles")]
+    image = [t for t in kept if t.codec_id in IMAGE_SUB_CODECS]
+    if not image:
+        return {}
+    text = [t for t in kept if t.codec_id not in IMAGE_SUB_CODECS]
+
+    overrides: dict[int, tuple[bool, bool]] = {
+        t.id: (False, False) for t in image}
+    for demoted in (t for t in image if t.default):
+        candidates = ([t for t in text if t.lang == demoted.lang
+                       and t.forced == demoted.forced]
+                      or [t for t in text if t.lang == demoted.lang])
+        if candidates:
+            heir = candidates[0]
+            overrides[heir.id] = (True, heir.forced)
+    return overrides
+
+
+def subtitle_automation_note(plan: FilePlan) -> str | None:
+    """Klartext-Hinweis zur Untertitel-Automatik des Kompatibilitätsmodus —
+    für Vorschau und Protokoll (eine Quelle, ein Wortlaut)."""
+    overrides = subtitle_flag_overrides(plan)
+    if not overrides:
+        return None
+    heirs = [tid for tid, (dflt, _f) in overrides.items() if dflt]
+    if heirs:
+        return ("Bild-Untertitel starten nicht mehr automatisch — "
+                "die Textspur übernimmt die Automatik.")
+    return ("Bild-Untertitel starten nicht mehr automatisch — "
+            "bei Bedarf im Player zuschalten.")
 
 
 def stereo_temp_name(track: Track, settings: StereoSettings) -> str:
@@ -103,6 +156,12 @@ def build_mkvmerge_mux(mkvmerge: str, plan: FilePlan, settings: StereoSettings,
         is_default = (not plan.default_audio_is_stereo
                       and tid == plan.default_audio_source)
         cmd += ["--default-track-flag", f"{tid}:{'yes' if is_default else 'no'}"]
+
+    # Untertitel-Automatik des Kompatibilitätsmodus (Details: Docstring
+    # von subtitle_flag_overrides) — außerhalb des Modus bleibt alles 1:1.
+    for tid, (dflt, forced) in sorted(subtitle_flag_overrides(plan).items()):
+        cmd += ["--default-track-flag", f"{tid}:{'yes' if dflt else 'no'}",
+                "--forced-display-flag", f"{tid}:{'yes' if forced else 'no'}"]
 
     cmd.append(media.path)
 
