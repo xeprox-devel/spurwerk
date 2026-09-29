@@ -38,6 +38,9 @@ KIND_EXE = {"mkvtoolnix": "mkvmerge", "ffmpeg": "ffmpeg",
             "dovi_tool": "dovi_tool"}
 KIND_TITLE = {"mkvtoolnix": "MKVToolNix", "ffmpeg": "FFmpeg",
               "dovi_tool": "dovi_tool"}
+# alle erkannten EXEs eines Pakets — ein Update ersetzt sie gemeinsam
+KIND_EXES = {"mkvtoolnix": ("mkvmerge",), "ffmpeg": ("ffmpeg", "ffprobe"),
+             "dovi_tool": ("dovi_tool",)}
 
 # Update-Zustand eines installierten Werkzeugs
 CURRENT, OUTDATED, UNKNOWN = "current", "outdated", "unknown"
@@ -62,6 +65,13 @@ def detect_tools(base_path: Path, configured: dict[str, str]) -> dict[str, str]:
         if configured_path and Path(configured_path).exists():
             result[name] = configured_path
             continue
+        # ffprobe gehört zu ffmpeg: neben einer selbst gewählten ffmpeg.exe
+        # gilt es mit (wie mkvextract neben mkvmerge im Runner)
+        if name == "ffprobe" and result.get("ffmpeg"):
+            sibling = Path(result["ffmpeg"]).with_name("ffprobe.exe")
+            if sibling.exists():
+                result[name] = str(sibling)
+                continue
         candidate = base_path / "tools" / f"{name}.exe"
         result[name] = str(candidate) if candidate.exists() else ""
     return result

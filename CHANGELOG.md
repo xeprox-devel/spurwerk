@@ -33,6 +33,30 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 - **Werkzeug-Downloads während einer laufenden Verarbeitung** sind jetzt
   gesperrt (mit Hinweis) — vorher konnte der Dialog eine gerade genutzte
   EXE ersetzen wollen.
+- **Werkzeuge-Dialog während eines Downloads geschlossen:** Das
+  Hauptfenster erfährt jetzt trotzdem von den neu installierten
+  Werkzeugen (vorher „mkvmerge fehlt" bis zum Neustart). Der Dialog prüft
+  beim Öffnen außerdem selbst nach, statt einem veralteten Stand zu trauen.
+- **Keine 100-MB-Reste mehr in tools/:** Scheitert das Entpacken (EXE in
+  Benutzung, Platte voll), wird die halbe `.part`-Datei aufgeräumt.
+- **Downloads ohne Prüfsumme werden angesagt** statt still als
+  „SHA-256-geprüft" zu gelten (32-bit-FFmpeg; dovi_tool, wenn die
+  GitHub-API gerade nicht antwortet).
+- **32-bit-Windows:** „Fehlende Werkzeuge herunterladen" endete immer mit
+  einem Fehler, weil dovi_tool (gibt es nur für 64 bit) als fehlend
+  zählte. Die Zeile sagt jetzt „nur für 64-bit-Windows".
+- **Selbst gewähltes FFmpeg:** Ein `ffprobe.exe` im selben Ordner wird
+  mitgenommen (vorher blieb die DV-Analyse gesperrt). Aktualisieren
+  verwirft die eigenen Pfade für ffmpeg UND ffprobe gemeinsam — kein
+  Versionsmix mehr.
+- **Pfad selbst wählen in einem schreibgeschützten Ordner** tat
+  scheinbar nichts; jetzt gilt der Pfad für die Sitzung, mit Hinweis.
+- Über-Dialog: sagt jetzt richtig, dass nur die Werkzeuge geladen werden
+  und die übrigen Bibliotheken eingebaut sind.
+
+### Entwicklung
+- `tests/smoke_ui.py` leitet die Konfiguration in einen Temp-Ordner um —
+  der Sichtcheck überschrieb bisher die echte `config.json`.
 
 ## [2.0.0] — 2026-07-06
 

@@ -53,8 +53,10 @@ class AboutDialog(ttk.Toplevel):
             ttk.Label(credits, text=f"   •  {tool}  ·  {src}",
                       foreground=theme.MUTED).pack(anchor="w")
         ttk.Label(credits,
-                  text="Alle unter eigenen Open-Source-Lizenzen; Spurwerk lädt "
-                       "sie\nauf Wunsch von den offiziellen Quellen.",
+                  text="Alle unter eigenen Open-Source-Lizenzen. Die Werkzeuge "
+                       "(MKVToolNix,\nFFmpeg, dovi_tool) lädt Spurwerk auf "
+                       "Wunsch von den offiziellen\nQuellen; die übrigen "
+                       "sind eingebaut.",
                   foreground=theme.MUTED, justify="left").pack(anchor="w",
                                                               pady=(4, 0))
 

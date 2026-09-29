@@ -131,6 +131,9 @@ class ToolManagerDialog(ttk.Toplevel):
         theme.apply_dark_titlebar(self)
         self.place_window_center()
         self.after(100, self._poll)
+        # Der übergebene Stand kann leer (Startprüfung läuft noch) oder
+        # veraltet sein — der Dialog prüft selbst nach
+        self._reprobe(notify_main=False)
         if self.is_busy():
             self._message("Verarbeitung läuft — Laden und Aktualisieren "
                           "geht erst nach dem Lauf.", theme.COLORS["warning"])
@@ -166,7 +169,10 @@ class ToolManagerDialog(ttk.Toplevel):
         browse.pack(side="left")
         _tip(browse, f"Vorhandene {exe}.exe selbst auswählen")
         action = None
-        if kind in downloader.DOWNLOADERS:
+        if not downloader.can_download(kind):
+            ttk.Label(buttons, text="nur für 64-bit-Windows",
+                      foreground=theme.MUTED).pack(side="left", padx=(8, 0))
+        else:
             action = ttk.Button(buttons, text="⬇  Laden", width=_ACTION_WIDTH,
                                 bootstyle="primary-outline",
                                 command=lambda k=kind: self._download(only=k))
@@ -256,15 +262,17 @@ class ToolManagerDialog(ttk.Toplevel):
                 return not (pr and pr.ok)
             return False
 
+        # was dieses System gar nicht laden kann (dovi_tool auf 32 bit),
+        # zählt nicht als fehlend — sonst endete jeder Lauf mit einem Fehler
         return [k for k in self.rows
-                if k in downloader.DOWNLOADERS and incomplete(k)]
+                if downloader.can_download(k) and incomplete(k)]
 
     def _outdated(self) -> list[str]:
         if not self._latest:
             return []
         return [u.kind for u in toolchain.pending_updates(self._status,
                                                           self._latest)
-                if u.kind in downloader.DOWNLOADERS]
+                if downloader.can_download(u.kind)]
 
     def _main_action(self) -> tuple[str, list[str]]:
         """(Beschriftung, Pakete) des Hauptknopfs."""
@@ -310,7 +318,13 @@ class ToolManagerDialog(ttk.Toplevel):
                           theme.COLORS["danger"])
             return
         self.cfg.tools[exe] = path
-        appconfig.save(self.cfg)
+        try:
+            appconfig.save(self.cfg)
+        except OSError as exc:
+            # schreibgeschützter Ordner: für diese Sitzung trotzdem nutzen
+            self._message(f"Pfad gilt nur bis zum Beenden — Einstellungen "
+                          f"nicht speicherbar ({exc}).",
+                          theme.COLORS["warning"])
         self._reprobe()
 
     def _download(self, only: str | None = None,
@@ -343,22 +357,28 @@ class ToolManagerDialog(ttk.Toplevel):
     def _download_worker(self, kinds: list[str]) -> None:
         tools_dir = appconfig.base_path() / "tools"
         errors: list[str] = []
+        unverified: list[str] = []
         changed = False
         try:
             for kind in kinds:
                 title = _TOOL_TITLES[kind][0]
                 try:
                     self.q.put(("STEP", f"{title}: starte Download …", None))
-                    downloader.DOWNLOADERS[kind](
+                    result = downloader.DOWNLOADERS[kind](
                         tools_dir,
                         lambda msg, pct: self.q.put(("STEP", msg, pct)),
                         self.cancel)
                     changed = True
-                    # veralteten manuellen Pfad nicht weiter bevorzugen —
-                    # sonst überschattet er die frisch geladene EXE
-                    exe = _TOOL_EXES[kind]
-                    if self.cfg.tools.get(exe):
-                        self.cfg.tools.pop(exe, None)
+                    if not result.verified:
+                        unverified.append(title)
+                    # veraltete manuelle Pfade nicht weiter bevorzugen —
+                    # sonst überschatten sie die frisch geladenen EXEs
+                    # (bei FFmpeg ffmpeg UND ffprobe, sonst Versionsmix)
+                    stale = [exe for exe in toolchain.KIND_EXES[kind]
+                             if self.cfg.tools.get(exe)]
+                    if stale:
+                        for exe in stale:
+                            self.cfg.tools.pop(exe, None)
                         try:
                             appconfig.save(self.cfg)
                         except OSError:
@@ -372,7 +392,7 @@ class ToolManagerDialog(ttk.Toplevel):
                 # Hauptfenster neu prüfen lassen — auch wenn der Dialog
                 # inzwischen geschlossen wurde (on_changed ist thread-sicher)
                 self.on_changed()
-            self.q.put(("DONE", errors))
+            self.q.put(("DONE", errors, unverified))
 
     def _check_updates(self) -> None:
         if self._checking:
@@ -405,13 +425,20 @@ class ToolManagerDialog(ttk.Toplevel):
                 elif msg[0] == "LATEST":
                     self._on_latest(msg[1])
                 elif msg[0] == "DONE":
-                    errors = msg[1]
+                    _, errors, unverified = msg
                     self._running = False
                     self.gauge.configure(value=100 if not errors else 0)
                     if errors:
                         self.step_label.configure(
                             text="  |  ".join(errors),
                             foreground=theme.COLORS["danger"])
+                    elif unverified:
+                        # ehrlich statt „SHA-256-geprüft“ für alles
+                        self.step_label.configure(
+                            text="Fertig — ohne SHA-256-Prüfung geladen "
+                                 "(keine Prüfsumme erhältlich): "
+                                 f"{', '.join(unverified)}",
+                            foreground=theme.COLORS["warning"])
                     else:
                         self.step_label.configure(
                             text="Fertig — Werkzeuge sind einsatzbereit.",

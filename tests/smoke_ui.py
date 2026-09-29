@@ -10,6 +10,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import tempfile  # noqa: E402
+
+import config as appconfig  # noqa: E402
+
+# Nie die echte config.json des Entwicklers überschreiben (Sitzung, Profile,
+# Tool-Pfade) — der Sichtcheck speichert beim Laden und Beenden
+appconfig.CONFIG_FILE = (Path(tempfile.mkdtemp(prefix="spurwerk-smoke-"))
+                         / "config.json")
+
 from PIL import ImageGrab  # noqa: E402
 
 from app import SpurwerkApp  # noqa: E402

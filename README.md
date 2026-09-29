@@ -189,7 +189,8 @@ Spurwerk orchestriert bewährte freie Software: **MKVToolNix**
 (mkvtoolnix.download), **FFmpeg** (gyan.dev/BtbN) und **dovi_tool**
 (quietvoid) für „DV/HDR → HDR10". Spurwerk liefert sie nicht mit,
 sondern lädt sie auf Wunsch per Ein-Klick, geprüft per SHA-256, und
-hält sie auf Wunsch aktuell.
+hält sie auf Wunsch aktuell. (Einzige Ausnahme: Der 32-bit-FFmpeg-Build
+wird ohne Prüfsumme veröffentlicht — das sagt Spurwerk dann auch an.)
 
 Der optionale Titelabgleich nutzt die **TMDb-API**, ist aber nicht von
 TMDb unterstützt oder zertifiziert.

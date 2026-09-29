@@ -264,3 +264,83 @@ class TestDoviToolPruefsumme:
         assert downloader._asset_sha256({}) is None
         assert downloader._asset_sha256({"digest": "sha512:abc"}) is None
         assert downloader._asset_sha256({"digest": "sha256:kurz"}) is None
+
+
+class TestNachbesserungen:
+    """Befunde aus der Projektprüfung rund um die Werkzeuge."""
+
+    def test_dovi_tool_nur_auf_64bit_ladbar(self, monkeypatch):
+        monkeypatch.setattr(downloader, "os_is_64bit", lambda: False)
+        assert not downloader.can_download("dovi_tool")
+        assert downloader.can_download("mkvtoolnix")
+        assert downloader.can_download("ffmpeg")
+        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
+        assert downloader.can_download("dovi_tool")
+        assert not downloader.can_download("tesseract")
+
+    def test_ffprobe_neben_selbst_gewaehltem_ffmpeg(self, tmp_path):
+        own = tmp_path / "eigenes"
+        own.mkdir()
+        (own / "ffmpeg.exe").write_bytes(b"")
+        (own / "ffprobe.exe").write_bytes(b"")
+        base = tmp_path / "app"
+        (base / "tools").mkdir(parents=True)
+        paths = toolchain.detect_tools(
+            base, {"ffmpeg": str(own / "ffmpeg.exe")})
+        assert paths["ffprobe"] == str(own / "ffprobe.exe")
+
+    def test_ffprobe_sonst_aus_tools(self, tmp_path):
+        base = tmp_path / "app"
+        (base / "tools").mkdir(parents=True)
+        for name in ("ffmpeg", "ffprobe"):
+            (base / "tools" / f"{name}.exe").write_bytes(b"")
+        paths = toolchain.detect_tools(base, {})
+        assert paths["ffprobe"] == str(base / "tools" / "ffprobe.exe")
+
+    def test_entpacken_hinterlaesst_keine_part_reste(self, monkeypatch,
+                                                     tmp_path):
+        archive = tmp_path / "a.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("bin/ffmpeg.exe", b"x" * 1000)
+
+        def in_use(self, target):   # Ziel-EXE läuft gerade
+            raise PermissionError("in Benutzung")
+        monkeypatch.setattr(downloader.Path, "replace", in_use)
+        with pytest.raises(downloader.DownloadError, match="verwendet"):
+            downloader._extract_members(
+                archive, {"bin/ffmpeg.exe": "ffmpeg.exe"}, tmp_path,
+                lambda *_: None)
+        assert not list(tmp_path.glob("*.part"))
+
+    def test_win32_ffmpeg_wird_als_ungeprueft_gemeldet(self, monkeypatch,
+                                                       tmp_path):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("x/bin/ffmpeg.exe", b"MZ")
+            zf.writestr("x/bin/ffprobe.exe", b"MZ")
+        payload = buf.getvalue()
+        monkeypatch.setattr(downloader, "os_is_64bit", lambda: False)
+
+        def no_sums(url, timeout=None):
+            raise OSError("HTTP Error 404")
+        monkeypatch.setattr(downloader, "_get_text", no_sums)
+
+        def fake_download(url, dest, progress, label, cancel):
+            dest.write_bytes(payload)
+            return hashlib.sha256(payload).hexdigest()
+        monkeypatch.setattr(downloader, "_download", fake_download)
+        result = downloader.download_ffmpeg(
+            tmp_path, lambda *_: None, threading.Event())
+        assert result.verified is False
+        assert (tmp_path / "ffprobe.exe").exists()
+
+    def test_expect_hash_beide_formate(self):
+        digest = "ab" * 32
+        # gyan: nur der Digest
+        assert downloader._expect_hash(digest + "\n", "x.zip") == digest
+        # BtbN/MKVToolNix: „hash  name“ pro Zeile, exakter Namensvergleich
+        sums = (f"{'cd' * 32}  other-ffmpeg-win64-gpl.zip\n"
+                f"{digest}  ffmpeg-win64-gpl.zip\n")
+        assert downloader._expect_hash(sums,
+                                       "ffmpeg-win64-gpl.zip") == digest
+        assert downloader._expect_hash(sums, "fehlt.zip") is None

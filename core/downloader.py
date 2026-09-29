@@ -72,6 +72,7 @@ class DownloadResult:
     tool: str
     version: str
     files: list[str] = field(default_factory=list)
+    verified: bool = True    # False: Quelle ohne Prüfsumme (wird angesagt)
 
 
 def os_is_64bit() -> bool:
@@ -178,9 +179,15 @@ def _extract_members(archive: Path, wanted_suffixes: dict[str, str],
                         # erst .part schreiben, dann atomar ersetzen — nie
                         # eine halbe EXE hinterlassen
                         part = target.with_suffix(".part")
-                        with zf.open(member) as src, open(part, "wb") as dst:
-                            shutil.copyfileobj(src, dst)
-                        part.replace(target)
+                        try:
+                            with zf.open(member) as src, \
+                                    open(part, "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                            part.replace(target)
+                        finally:
+                            # EXE in Benutzung, Platte voll, CRC-Fehler:
+                            # keine 100-MB-Reste in tools/ liegen lassen
+                            part.unlink(missing_ok=True)
                         extracted.append(str(target))
     except PermissionError as exc:
         raise DownloadError(
@@ -238,7 +245,8 @@ def download_mkvtoolnix(tools_dir: Path, progress: ProgressCb,
             {"mkvtoolnix/mkvmerge.exe": "mkvmerge.exe",
              "mkvtoolnix/mkvextract.exe": "mkvextract.exe"},
             tools_dir, progress)
-        return DownloadResult("mkvtoolnix", version, files)
+        return DownloadResult("mkvtoolnix", version, files,
+                              verified=bool(expected))
     finally:
         archive.unlink(missing_ok=True)
 
@@ -296,7 +304,8 @@ def _ffmpeg_from(url: str, sums_url: str, version: str, tools_dir: Path,
             {"bin/ffmpeg.exe": "ffmpeg.exe",
              "bin/ffprobe.exe": "ffprobe.exe"},   # ffprobe: DV-/HDR-Analyse
             tools_dir, progress)
-        return DownloadResult("ffmpeg", version, files)
+        return DownloadResult("ffmpeg", version, files,
+                              verified=bool(expected))
     finally:
         archive.unlink(missing_ok=True)
 
@@ -370,7 +379,8 @@ def download_dovi_tool(tools_dir: Path, progress: ProgressCb,
                                 "Download beschädigt?")
         files = _extract_members(
             archive, {"dovi_tool.exe": "dovi_tool.exe"}, tools_dir, progress)
-        return DownloadResult("dovi_tool", version, files)
+        return DownloadResult("dovi_tool", version, files,
+                              verified=bool(expected))
     finally:
         archive.unlink(missing_ok=True)
 
@@ -380,6 +390,11 @@ DOWNLOADERS = {
     "ffmpeg": download_ffmpeg,
     "dovi_tool": download_dovi_tool,
 }
+
+
+def can_download(kind: str) -> bool:
+    """Gibt es für dieses System eine Quelle? dovi_tool: nur 64-bit."""
+    return kind in DOWNLOADERS and (kind != "dovi_tool" or os_is_64bit())
 
 
 # ── Update-Prüfung ────────────────────────────────────────────────────────
