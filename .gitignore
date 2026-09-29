@@ -7,6 +7,9 @@ __pycache__/
 # Nutzer-/Maschinenspezifisch
 config.ini
 config.json
+# Sicherung, Temp-Datei und beiseitegelegte defekte Fassungen (enthalten
+# u. U. den TMDb-Key)
+config.json.*
 
 # Eingebauter TMDb-Key (wird beim Build generiert, nie ins Repo)
 core/_apikey.py
