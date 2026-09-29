@@ -7,6 +7,7 @@ Start-Button sagt vorher exakt, was passieren wird.
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 from dataclasses import replace
@@ -67,6 +68,12 @@ _SKIP_REASON = {_W.NO_DRIVE: "Laufwerk nicht verbunden",
                 _W.NO_FILE: "Datei nicht gefunden",
                 _W.CHECKING: "Quelle wird noch geprüft"}
 SOURCE_CHECK_MS = 5000   # Takt der Hintergrund-Prüfung wartender Zeilen
+# „Datei neu zuordnen …“: so viele Startordner fragt der Hintergrund höchstens
+# und so lange (s) wartet er auf sie, bevor der Dialog öffnet
+RELINK_FOLDERS = 8
+RELINK_FOLDER_S = 1.0
+_OUTPUT_TIP = ("Ausgabeziel wählen: Quellordner oder fester Ordner — plus "
+               "Optionen für den Dateinamen.")
 
 
 def _join(parts: list[str], word: str = "und") -> str:
@@ -81,10 +88,10 @@ def n_text(n: int, singular: str, plural: str) -> str:
     return f"{n} {singular if n == 1 else plural}"
 
 
-def _tip(widget, text: str) -> None:
+def _tip(widget, text: str) -> ToolTip:
     """Dezenter Tooltip im App-Look (dunkle Fläche, heller Text)."""
-    ToolTip(widget, text=text, bootstyle="inverse-dark", delay=450,
-            wraplength=340)
+    return ToolTip(widget, text=text, bootstyle="inverse-dark", delay=450,
+                   wraplength=340)
 
 
 class MainWindow(ttk.Frame):
@@ -123,6 +130,18 @@ class MainWindow(ttk.Frame):
         # in _pending_restore — eine Hintergrund-Prüfung holt sie zurück
         self._watch = session.SourceWatch()
         self._watch_after: str | None = None   # after-ID der nächsten Prüfung
+        # Größe/Änderungszeit der gescannten Quellen (für die Sitzung): So
+        # erkennt Spurwerk eine Datei wieder, deren Platte später unter
+        # einem anderen Laufwerksbuchstaben zurückkommt
+        self._source_ids: dict[str, dict] = {}
+        # Suche unter anderem Buchstaben — merkt sich stumme Laufwerke
+        self._moved_search = session.MovedSearch()
+        self._relinking = False      # „Datei neu zuordnen …“ sucht Startordner
+        # Erreichbarkeit des festen Ausgabeordners (NAS/USB) — geprüft nur
+        # im Hintergrund; ein unerreichbarer bleibt eingestellt
+        self._out_watch = session.OutputDirWatch()
+        self._out_notice = ""        # seine Warnung (Leerzustand-Hinweis)
+        self._starting = False       # Start prüft gerade die Ausgabe
         self._scan_failed: set[str] = set()   # erneut analysierbar
         self._save_warned = False             # Speicherfehler nur einmal melden
         self._done_removal: str | None = None  # after-ID des Aufräumens
@@ -307,8 +326,7 @@ class MainWindow(ttk.Frame):
                                      command=self._output_menu)
         self.output_btn.pack(side="left", padx=(18, 0))
         self._lock_buttons.append(self.output_btn)
-        _tip(self.output_btn, "Ausgabeziel wählen: Quellordner oder fester "
-                              "Ordner — plus Optionen für den Dateinamen.")
+        self._output_tip = _tip(self.output_btn, _OUTPUT_TIP)
 
         self.file_list = FileList(self.work, on_select=self._on_file_selected)
         self.file_list.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
@@ -636,6 +654,9 @@ class MainWindow(ttk.Frame):
             text="Ausgabe: " + " · ".join(parts)
                  + f"   →   {target if self.output_dir else target.name}")
         notes = list(plan.warnings)
+        if self._output_blocked([plan]):
+            notes.insert(0, "Ausgabeordner nicht erreichbar — Laufwerk "
+                            "verbinden oder anderen Ordner wählen")
         sub_note = subtitle_automation_note(plan)
         if sub_note:
             notes.append(sub_note)
@@ -660,9 +681,12 @@ class MainWindow(ttk.Frame):
             return preview, ("⚠ Datei nicht gefunden, das Laufwerk ist da — "
                              "verschoben, umbenannt oder gelöscht? Liegt sie "
                              "wieder am alten Ort, liest Spurwerk sie "
-                             "automatisch ein; sonst „Entfernen“.")
+                             "automatisch ein; sonst Rechtsklick → „Datei "
+                             "neu zuordnen …“ oder „Entfernen“.")
         return preview, ("⚠ Laufwerk nicht verbunden — sobald es wieder da "
-                         "ist, liest Spurwerk die Datei automatisch ein.")
+                         "ist, auch unter einem anderen Buchstaben, liest "
+                         "Spurwerk die Datei automatisch ein; sonst "
+                         "Rechtsklick → „Datei neu zuordnen …“.")
 
     def _update_stereo_panel_visibility(self) -> None:
         # Das Panel zeigt und editiert die Konfiguration der AUSGEWÄHLTEN Datei
@@ -682,6 +706,11 @@ class MainWindow(ttk.Frame):
             self.stereo_panel.grid_remove()
 
     def _update_start_button(self) -> None:
+        if self._starting:   # Überschreib-Prüfung läuft (Hintergrund)
+            self.start_btn.configure(
+                text="▶  Start (F5) — Ausgabe wird geprüft …",
+                state="disabled")
+            return
         # erledigte Dateien zählen nicht mit — sie verlassen gleich die Liste
         ready = [p for p in session.runnable_plans(self.plans.values())
                  if p.status is not FileStatus.RUNNING]
@@ -785,7 +814,10 @@ class MainWindow(ttk.Frame):
                         dv_info = dv_analysis.analyze(ffprobe, path)
                     except dv_analysis.DVError:
                         dv_info = None   # DV-Analyse ist optional
-                self.ui_q.put(("SCANNED", path, media, dv_info))
+                # Größe/Änderungszeit für die Sitzung (neuer Laufwerks-
+                # buchstabe) — hier im Hintergrund, nie im Tk-Thread
+                self.ui_q.put(("SCANNED", path, media, dv_info,
+                               session.source_identity(path)))
         except Exception as exc:   # noqa: BLE001 — Zeile darf nie hängen
             self.ui_q.put(("SCAN_FAILED", path,
                            f"Analyse fehlgeschlagen: {exc}"))
@@ -863,6 +895,7 @@ class MainWindow(ttk.Frame):
         self._pending_restore.clear()
         self._scan_failed.clear()
         self._watch.clear()
+        self._source_ids.clear()
         self.selected = None
         self.file_list.clear()
         self._sync_state()
@@ -894,6 +927,7 @@ class MainWindow(ttk.Frame):
         self._pending_restore.pop(path, None)
         self._scan_failed.discard(path)
         self._watch.discard(path)
+        self._source_ids.pop(path, None)
 
     def _on_file_selected(self, path: str) -> None:
         self.selected = path
@@ -961,6 +995,11 @@ class MainWindow(ttk.Frame):
             else:
                 menu.add_command(label="Jetzt erneut prüfen",
                                  command=self._check_sources)
+            if self._watch.state(path) in (_W.NO_DRIVE, _W.NO_FILE):
+                # liegt woanders (andere Platte, verschoben, umbenannt):
+                # der Nutzer zeigt sie — die Einstellungen bleiben
+                menu.add_command(label="Datei neu zuordnen …",
+                                 command=lambda: self._relink(path))
             menu.add_separator()
             for label in ("Ausgabename/-ort ändern …", "Ausgabeordner öffnen",
                           "Quellordner öffnen"):
@@ -970,8 +1009,11 @@ class MainWindow(ttk.Frame):
                 menu.add_command(label="Ausgabename/-ort ändern …",
                                  state=lock,
                                  command=lambda: self._change_output(plan))
+                # unerreichbares NAS: der Explorer hinge daran — aus
                 menu.add_command(
                     label="Ausgabeordner öffnen",
+                    state="disabled" if self._output_blocked([plan])
+                    else "normal",
                     command=lambda: self._open_folder(
                         Path(plan.output_path).parent))
             menu.add_command(
@@ -995,9 +1037,13 @@ class MainWindow(ttk.Frame):
         if self._running:
             return
         current = Path(plan.output_path)
+        # Startordner nie auf einem unerreichbaren Ausgabe-Laufwerk — der
+        # Dialog hinge sonst daran; dann der Quellordner
+        folder = (Path(plan.media.path).parent if self._output_blocked([plan])
+                  else current.parent)
         chosen = filedialog.asksaveasfilename(
             parent=self, title="Ausgabedatei wählen",
-            initialdir=str(current.parent), initialfile=current.name,
+            initialdir=str(folder), initialfile=current.name,
             defaultextension=".mkv",
             filetypes=[("MKV-Dateien", "*.mkv")])
         if chosen:
@@ -1298,6 +1344,10 @@ class MainWindow(ttk.Frame):
         self.output_dir = folder
         self.profile.output.directory = folder
         self.cfg.output_dir = folder          # dauerhaft merken
+        # eben im Dialog gewählt (bzw. Quellordner): erreichbar — ein
+        # Hinweis zum vorigen Ordner verschwindet sofort
+        self._out_watch.set_folder(folder, _W.REACHABLE)
+        self._drop_output_notice()
         self._apply_output_button()
         for plan in self.plans.values():
             if plan is not None:
@@ -1306,25 +1356,92 @@ class MainWindow(ttk.Frame):
         self._safe_save()
 
     def _restore_output_dir(self) -> None:
-        """Gemerkten Ausgabeordner beim Start anwenden."""
-        folder = self.output_dir
-        if folder and not Path(folder).is_dir():
-            folder = ""                       # Ordner existiert nicht mehr
-            self.output_dir = ""
-            self.cfg.output_dir = ""
-        self.profile.output.directory = folder
+        """Gemerkten Ausgabeordner beim Start anwenden — ungeprüft: Ob er
+        erreichbar ist, klärt eine Prüfung im Hintergrund (ein getrenntes
+        NAS hielte sonst den Programmstart fest). Ein unerreichbarer oder
+        gelöschter Ordner bleibt eingestellt."""
+        self.profile.output.directory = self.output_dir
+        self._out_watch.set_folder(self.output_dir)
         self._apply_output_button()
+        self._check_output_dir()
 
     def _apply_output_button(self) -> None:
         """Immer Cyan-Outline — exakt der Look von „+ Dateien …“/„+ Ordner …“
-        (Nutzerentscheid); ein fester Ordner zeigt sich nur im Button-Text."""
-        if self.output_dir:
-            self.output_btn.configure(
-                text=f"Ausgabe: {Path(self.output_dir).name}  ▾",
-                bootstyle="primary-outline")
+        (Nutzerentscheid); ein fester Ordner zeigt sich nur im Button-Text,
+        ein unerreichbarer dort mit „⚠“ und im Tooltip."""
+        folder = self.output_dir
+        if not folder:
+            text, tip = "Ausgabe: Quellordner", _OUTPUT_TIP
         else:
-            self.output_btn.configure(text="Ausgabe: Quellordner  ▾",
-                                      bootstyle="primary-outline")
+            # „\\\\nas\\filme“ hat keinen Namen — dann der ganze Pfad
+            text = f"Ausgabe: {Path(folder).name or folder}"
+            tip = f"Fester Ausgabeordner: {folder}\n\n{_OUTPUT_TIP}"
+            if self._out_watch.unreachable:
+                text += "  ⚠ nicht erreichbar"
+                tip = (f"Ausgabeordner „{folder}“ ist nicht erreichbar — "
+                       f"Laufwerk verbinden oder anderen Ordner wählen. "
+                       f"Spurwerk prüft automatisch weiter.")
+        self.output_btn.configure(text=f"{text}  ▾",
+                                  bootstyle="primary-outline")
+        self._output_tip.text = tip
+
+    def _output_blocked(self, plans) -> list[FilePlan]:
+        """Pläne, die in den (nach letztem Stand) unerreichbaren festen
+        Ausgabeordner schrieben — leer, solange er erreichbar ist. Ohne
+        Dateizugriff."""
+        if not (self.output_dir and self._out_watch.unreachable):
+            return []
+        return session.outputs_on_drive(plans, self.output_dir)
+
+    def _check_output_dir(self) -> None:
+        """Den festen Ausgabeordner prüfen — im Hintergrund, eine Prüfung
+        zur Zeit; ohne festen Ordner keine."""
+        folder = self._out_watch.begin_check()
+        if folder:
+            threading.Thread(target=self._output_worker, args=(folder,),
+                             daemon=True).start()
+
+    def _output_worker(self, folder: str) -> None:
+        finding = _W.NO_DRIVE
+        session.quiet_drive_errors()
+        try:
+            finding = session.probe_output_dir(folder)
+        finally:
+            self.ui_q.put(("OUTPUT_DIR", folder, finding))
+
+    def _on_output_finding(self, folder: str, finding: str) -> None:
+        """Befund zum festen Ausgabeordner (Takt, Programm- oder Job-Start):
+        Hinweis am Button, im Protokoll und in der Vorschau anpassen."""
+        before = self._out_watch.result(folder, finding)
+        if before is None:
+            return
+        if finding == _W.NO_DRIVE:
+            self._out_notice = (
+                f"⚠ Ausgabeordner „{folder}“ ist nicht erreichbar (Laufwerk "
+                f"bzw. Netzfreigabe nicht verbunden) — er bleibt eingestellt, "
+                f"Spurwerk prüft automatisch weiter. Bis dahin startet kein "
+                f"Job, der dorthin schreibt; sonst anderen Ordner oder "
+                f"„Quellordner“ wählen.")
+            self._warn(self._out_notice)
+        elif before == _W.NO_DRIVE:
+            self._drop_output_notice()
+            self.log.log(
+                f"Ausgabeordner „{folder}“ ist wieder erreichbar"
+                + (" — der Ordner selbst fehlt, Spurwerk legt ihn beim Start "
+                   "an." if finding == _W.NO_FILE else "."), "info")
+        elif finding == _W.NO_FILE:
+            self.log.log(f"Ausgabeordner „{folder}“ existiert nicht mehr — "
+                         f"Spurwerk legt ihn beim Start wieder an.", "info")
+        self._apply_output_button()
+        self._update_preview()
+
+    def _drop_output_notice(self) -> None:
+        """Warnung zum unerreichbaren Ausgabeordner erledigt — auch ihre
+        Zeile unter der Ablage im Leerzustand."""
+        if self._out_notice in self._empty_notices:
+            self._empty_notices.remove(self._out_notice)
+            self._refresh_empty_notice()
+        self._out_notice = ""
 
     # ══ Sitzung speichern / wiederherstellen ═════════════════════════════
 
@@ -1332,8 +1449,8 @@ class MainWindow(ttk.Frame):
         """Offene (nicht erledigte) Jobs für den nächsten Start merken —
         auch noch nicht gescannte, fehlgeschlagene und solche, deren
         Laufwerk gerade fehlt; in der Reihenfolge der Liste."""
-        self.cfg.session = session.session_jobs(self.plans,
-                                                self._pending_restore)
+        self.cfg.session = session.session_jobs(
+            self.plans, self._pending_restore, self._source_ids)
 
     def _safe_save(self) -> None:
         self.cfg.log_expanded = self.log.expanded
@@ -1376,8 +1493,9 @@ class MainWindow(ttk.Frame):
     # ══ Quellen auf nicht verbundenen Laufwerken ═════════════════════════
 
     def _check_sources(self) -> None:
-        """Wartende Zeilen jetzt prüfen — im Hintergrund, eine Prüfung zur
-        Zeit; ohne wartende Zeilen startet keine."""
+        """Wartende Zeilen und einen unerreichbaren Ausgabeordner jetzt
+        prüfen — im Hintergrund, je eine Prüfung zur Zeit; ohne Wartendes
+        startet keine."""
         if self._watch_after is not None:
             self.after_cancel(self._watch_after)
             self._watch_after = None
@@ -1385,12 +1503,17 @@ class MainWindow(ttk.Frame):
         if paths:
             threading.Thread(target=self._source_worker, args=(paths,),
                              daemon=True).start()
+        if self._out_watch.unreachable:
+            self._check_output_dir()
 
     def _schedule_source_check(self) -> None:
         """Nächste Prüfung im Takt — nur, solange geprüfte Zeilen auf ihre
-        Quelle warten und keine Prüfung läuft."""
-        if (self._watch_after is None and not self._watch.checking
-                and self._watch.waiting()):
+        Quelle oder der feste Ausgabeordner auf sein Laufwerk warten und
+        deren Prüfung nicht gerade läuft."""
+        waiting = ((self._watch.waiting() and not self._watch.checking)
+                   or (self._out_watch.unreachable
+                       and not self._out_watch.checking))
+        if self._watch_after is None and waiting:
             self._watch_after = self.after(SOURCE_CHECK_MS,
                                            self._on_source_timer)
 
@@ -1400,7 +1523,8 @@ class MainWindow(ttk.Frame):
 
     def _on_focus_in(self, event) -> None:
         # nur der Fokus aufs Fenster selbst, nicht jeder Widget-Wechsel darin
-        if (self.winfo_exists() and self._watch.waiting()
+        if (self.winfo_exists()
+                and (self._watch.waiting() or self._out_watch.unreachable)
                 and str(event.widget) == str(self.winfo_toplevel())):
             self._check_sources()
 
@@ -1408,8 +1532,10 @@ class MainWindow(ttk.Frame):
         """Hintergrund: erreichbar, Laufwerk fehlt oder nur die Datei — je
         Laufwerk ein eigener Faden, damit ein hängendes NAS die USB-Platte
         nicht aufhält. Jeder Befund geht sofort an die UI, der Abschluss
-        immer."""
+        immer. Die Suche unter anderen Laufwerksbuchstaben folgt getrennt
+        (_search_moved) — sie hält die Prüfung nie auf."""
         def check(group: list[str]) -> None:
+            session.quiet_drive_errors()
             for path, finding in session.probe_sources(group):
                 self.ui_q.put(("SOURCE", path, finding))
         try:
@@ -1468,15 +1594,196 @@ class MainWindow(ttk.Frame):
                 f"{n_text(n, 'Datei', 'Dateien')} der letzten Sitzung nicht "
                 f"gefunden, obwohl das Laufwerk da ist (verschoben oder "
                 f"gelöscht?) — {'sie bleibt' if one else 'sie bleiben'} "
-                f"samt Einstellungen in der Liste; „Entfernen“ nimmt sie "
-                f"heraus.", "warn")
+                f"samt Einstellungen in der Liste; „Datei neu zuordnen …“ "
+                f"(Rechtsklick) zeigt Spurwerk den neuen Ort, „Entfernen“ "
+                f"nimmt sie heraus.", "warn")
+        self._search_moved()
         self._schedule_source_check()
+
+    # ── Datei an anderem Ort (neuer Laufwerksbuchstabe, neu zugeordnet) ──
+
+    def _search_moved(self) -> None:
+        """„Laufwerk fehlt“-Zeilen unter den anderen Laufwerksbuchstaben
+        suchen (USB-Platte als F: statt E:) — nach jeder Prüfung, im
+        Hintergrund, eine Suche zur Zeit. Sie dauert höchstens
+        session.SEARCH_DEADLINE; ein hängendes Laufwerk hält weder die
+        übrigen noch die nächste Prüfung auf."""
+        paths = self._watch.begin_search()
+        if paths:
+            threading.Thread(target=self._search_worker, args=(paths,),
+                             daemon=True).start()
+
+    def _search_worker(self, paths: list[str]) -> None:
+        finds = None
+        try:
+            # nur die Liste der Buchstaben, kein Zugriff auf die Laufwerke
+            finds = self._moved_search.run(paths, session.present_drives())
+        finally:
+            self.ui_q.put(("MOVED", finds))
+
+    def _on_moved(self, finds: session.MovedFinds | None) -> None:
+        """Ergebnis einer Suche: Ein eben verstummtes Laufwerk nennt das
+        Protokoll einmal; für die Pfade, die dort noch einen Kandidaten
+        haben könnten, wählt diese Suche nicht (nie raten)."""
+        self._watch.end_search()
+        if finds is None:
+            return
+        for letter in finds.silent:
+            self.log.log(f"Laufwerk {letter} antwortet nicht (getrenntes "
+                         f"Netzlaufwerk?) — Spurwerk sucht wartende Dateien "
+                         f"vorerst ohne dieses Laufwerk.", "dim")
+        for path, found in finds.found.items():
+            if path not in finds.unsure:
+                self._take_moved(path, found)
+
+    def _take_moved(self, path: str, found: list[tuple[str, int]]) -> None:
+        """Die Suche fand die Datei einer „Laufwerk fehlt“-Zeile unter
+        anderem Laufwerksbuchstaben. Übernommen wird nur ein eindeutiger
+        Fund (session.match_moved) — sonst wartet die Zeile weiter und das
+        Protokoll sagt es einmal."""
+        if self._watch.state(path) != _W.NO_DRIVE:
+            return   # inzwischen eingelesen, entfernt oder Laufwerk da
+        job = self._pending_restore.get(path, {})
+        new, matching = session.match_moved(found,
+                                            session.recorded_size(job))
+        name = Path(path).name
+        if new is None:
+            if len(matching) > 1 and self._watch.note(path, "mehrdeutig"):
+                where = _join(sorted({session.drive_letter(p)
+                                      for p in matching}))
+                self.log.log(
+                    f"{name}: passende Datei auf mehreren Laufwerken "
+                    f"gefunden ({where}) — Spurwerk wählt nicht selbst. "
+                    f"Rechtsklick → „Datei neu zuordnen …“.", "warn")
+            return
+        if session.find_listed(new, self.plans) is not None:
+            if self._watch.note(path, "doppelt"):
+                self.log.log(
+                    f"{name} liegt jetzt unter {new}, das steht aber schon "
+                    f"in der Warteschlange — die wartende Zeile bleibt, "
+                    f"„Entfernen“ nimmt sie heraus.", "warn")
+            return
+        self.log.log(f"Laufwerk {session.drive_letter(path)} ist jetzt "
+                     f"{session.drive_letter(new)} — {name} wird "
+                     f"eingelesen.", "info")
+        self._relocate(path, new, drive_gone=True)
+
+    def _relink(self, path: str) -> None:
+        """„Datei neu zuordnen …“: Der Nutzer zeigt, wo die Datei einer
+        wartenden Zeile jetzt liegt — alle Einstellungen bleiben. Zuerst
+        sucht ein Hintergrund-Faden einen erreichbaren Startordner (der
+        Datei-Dialog hinge an einem getrennten Laufwerk), dann öffnet
+        _relink_dialog den Dialog."""
+        if (self._relinking
+                or self._watch.state(path) not in (_W.NO_DRIVE, _W.NO_FILE)):
+            return
+        self._relinking = True
+        threading.Thread(target=self._relink_worker,
+                         args=(path, self._relink_folders(path)),
+                         daemon=True).start()
+
+    def _relink_worker(self, path: str, folders: list[str]) -> None:
+        folder = None
+        try:
+            folder = session.first_reachable(folders, RELINK_FOLDER_S)
+        finally:   # die Antwort kommt immer — sonst bliebe _relinking stehen
+            self.ui_q.put(("RELINK_FOLDER", path,
+                           folder or str(Path.home())))
+
+    def _relink_dialog(self, path: str, folder: str) -> None:
+        """Datei-Dialog für „Datei neu zuordnen …“ im erreichbaren
+        Startordner `folder` — die gewählte Datei ersetzt den Pfad der
+        Zeile samt allen Einstellungen (_relocate)."""
+        self._relinking = False
+        if self._watch.state(path) not in (_W.NO_DRIVE, _W.NO_FILE):
+            return   # inzwischen wiedergefunden, eingelesen oder entfernt
+        name = Path(path).name
+        chosen = filedialog.askopenfilename(
+            parent=self, title=f"Neuer Ort für „{name}“",
+            initialdir=folder, filetypes=[("MKV-Dateien", "*.mkv")])
+        if not chosen:
+            return
+        state = self._watch.state(path)
+        if state not in (_W.NO_DRIVE, _W.NO_FILE):
+            # während des Dialogs wiedergefunden, eingelesen oder entfernt
+            self.log.log(f"{name} wurde inzwischen wiedergefunden oder "
+                         f"entfernt — nichts geändert.", "info")
+            return
+        if not chosen.lower().endswith(".mkv"):
+            Messagebox.show_error("Bitte eine MKV-Datei wählen — nichts "
+                                  "geändert.", "Datei neu zuordnen",
+                                  parent=self)
+            return
+        try:   # eben im Dialog gewählt, also erreichbar
+            new = str(Path(chosen).resolve())
+        except OSError:
+            new = str(Path(chosen))
+        other = session.find_listed(new, [p for p in self.plans if p != path])
+        if other is not None:
+            Messagebox.show_error(
+                f"„{Path(new).name}“ steht schon in der Warteschlange:\n"
+                f"{other}\n\nNichts geändert.", "Datei neu zuordnen",
+                parent=self)
+            return
+        self.log.log(f"{name} neu zugeordnet: {new} — wird eingelesen.",
+                     "info")
+        self._relocate(path, new, drive_gone=state == _W.NO_DRIVE)
+
+    def _relink_folders(self, path: str) -> list[str]:
+        """Mögliche Startordner für „Datei neu zuordnen …“ nach Vorrang —
+        nur Text, ohne Dateizugriff: bei „Datei fehlt“ der bisherige Ordner
+        (sein Laufwerk ist da), dann die Ordner eingelesener Dateien der
+        Liste (zuletzt eingelesene zuerst), zuletzt das Benutzerverzeichnis.
+        Nie auf einem Laufwerk, das gerade fehlt; ob der Rest erreichbar ist
+        (ein NAS kann seit dem Einlesen getrennt sein), klärt
+        _relink_worker im Hintergrund."""
+        missing = {os.path.normcase(session.drive_root(p))
+                   for p in self._watch if self._watch.state(p) != _W.NO_FILE}
+        if self._out_watch.unreachable:
+            missing.add(os.path.normcase(session.drive_root(self.output_dir)))
+        folders = [str(Path(p).parent) for p, plan in self.plans.items()
+                   if plan is not None]
+        folders.reverse()                        # zuletzt eingelesene zuerst
+        if self._watch.state(path) == _W.NO_FILE:
+            folders.insert(0, str(Path(path).parent))
+        folders = [f for f in dict.fromkeys(folders)
+                   if os.path.normcase(session.drive_root(f)) not in missing]
+        return folders[:RELINK_FOLDERS] + [str(Path.home())]
+
+    def _relocate(self, old: str, new: str, *, drive_gone: bool) -> None:
+        """Die Datei einer wartenden Zeile liegt jetzt unter `new`: dieselbe
+        Zeile am selben Platz der Warteschlange, alle Einstellungen, die
+        Ausgabe zieht mit (session.relocate_job) — dann normal einlesen über
+        den Wiederherstellungsweg. Die Sitzung führt den Job ab jetzt nur
+        noch unter dem neuen Pfad."""
+        if session.find_listed(new, [old]) is not None:
+            new = old                            # derselbe Ort (wieder da)
+        job = self._pending_restore.get(old) or {"path": old}
+        moved = session.relocate_job(job, old, new, drive_gone=drive_gone)
+        self._forget_job(old)
+        self._pending_restore[new] = moved
+        if new != old:
+            items = list(self.plans.items())
+            self.plans.clear()
+            self.plans.update((new if p == old else p, plan)
+                              for p, plan in items)
+            if self.selected == old:
+                self.selected = new
+            self.file_list.rename(old, new)
+        if (moved.get("output_manual")
+                and moved.get("output_path") != job.get("output_path")):
+            self.log.log(f"Ausgabe folgt: {moved['output_path']}", "info")
+        self.file_list.update_file(new, plan_text="wird analysiert …",
+                                   status="wird gescannt", tag="dim")
+        threading.Thread(target=self._scan_worker, args=(new,),
+                         daemon=True).start()
+        self._refresh_all()
+        self._safe_save()
 
     # ══ Start / Abbruch ══════════════════════════════════════════════════
 
     def _start(self) -> None:
-        import copy
-        if self._running:
+        if self._running or self._starting:
             return
         # Offene Panel-Eingabe übernehmen: F5 im Feld „Spurname“ löst kein
         # <FocusOut> aus — sonst liefe der Start mit dem alten Namen
@@ -1501,6 +1808,8 @@ class MainWindow(ttk.Frame):
                 f"Benötigte Werkzeuge fehlen: {', '.join(missing)}.\n"
                 f"Bitte über das ⚙-Symbol einrichten.", "Werkzeuge fehlen",
                 parent=self)
+            return
+        if self._refuse_unreachable_output(plans):
             return
 
         # Endungen zuerst normalisieren (immer .mkv) — sonst prüfen
@@ -1532,14 +1841,87 @@ class MainWindow(ttk.Frame):
                 parent=self)
             return
 
-        existing = [p for p in plans if Path(p.output_path).exists()]
+        # Gibt es die Ausgaben schon? Das fragt die Laufwerke — ein
+        # getrenntes NAS hielte das Fenster fest: im Hintergrund, samt einem
+        # frischen Blick auf den festen Ausgabeordner; weiter geht es in
+        # _on_start_checked
+        self._starting = True
+        self._update_start_button()
+        threading.Thread(
+            target=self._start_check_worker,
+            args=([p.output_path for p in plans], self.output_dir),
+            daemon=True).start()
+
+    def _refuse_unreachable_output(self, plans: list[FilePlan],
+                                   recheck: bool = True) -> bool:
+        """Start verweigern, solange der feste Ausgabeordner nach letztem
+        Stand unerreichbar ist und ein Job dorthin schriebe — und frisch im
+        Hintergrund nachsehen (nie im Tk-Thread)."""
+        if not self._output_blocked(plans):
+            return False
+        Messagebox.show_error(
+            f"Ausgabeordner „{self.output_dir}“ ist nicht erreichbar — "
+            f"Laufwerk verbinden oder anderen Ordner wählen.",
+            "Ausgabeordner nicht erreichbar", parent=self)
+        if recheck:
+            self._check_output_dir()
+        return True
+
+    def _start_check_worker(self, outputs: list[str], folder: str) -> None:
+        """Hintergrund vor dem Start: Ist der feste Ausgabeordner erreichbar,
+        welche Ausgaben gibt es schon? Ausgaben auf einem unerreichbaren
+        Laufwerk werden nicht einzeln gefragt. existing=None: Prüfung
+        gescheitert — dann startet nichts (nie ungefragt überschreiben)."""
+        finding, existing = None, None
+        session.quiet_drive_errors()
+        try:
+            if folder:
+                finding = session.probe_output_dir(folder)
+            gone = (os.path.normcase(session.drive_root(folder))
+                    if finding == _W.NO_DRIVE else None)
+            existing = [out for out in outputs
+                        if os.path.normcase(session.drive_root(out)) != gone
+                        and session.source_exists(out)]
+        except Exception:   # noqa: BLE001 — die Antwort muss immer kommen
+            existing = None
+        finally:
+            self.ui_q.put(("START_CHECKED", outputs, folder, finding,
+                           existing))
+
+    def _on_start_checked(self, outputs: list[str], folder: str,
+                          finding: str | None,
+                          existing: list[str] | None) -> None:
+        self._starting = False
+        if folder and finding is not None:
+            self._on_output_finding(folder, finding)
+            self._schedule_source_check()   # unerreichbar → Takt prüft
+        self._update_start_button()
+        if self._running:
+            return
+        plans = session.runnable_plans(self.plans.values())
+        if [p.output_path for p in plans] != outputs:
+            # inzwischen geändert (Datei eingelesen, entfernt, Ausgabe
+            # umbenannt): alles noch einmal prüfen
+            self._start()
+            return
+        # eben frisch geprüft — kein zweiter Blick nötig
+        if self._refuse_unreachable_output(plans, recheck=False):
+            return
+        if existing is None:
+            self._warn("⚠ Die Ausgabedateien ließen sich vor dem Start nicht "
+                       "prüfen — nichts gestartet. Bitte erneut starten.")
+            return
         if existing:
             answer = Messagebox.yesno(
                 f"{n_text(len(existing), 'Ausgabedatei existiert', 'Ausgabedateien existieren')} "
                 f"bereits.\nÜberschreiben?", "Ausgabe vorhanden", parent=self)
             if answer not in ("Ja", "Yes"):
                 return
+        self._launch(plans)
 
+    def _launch(self, plans: list[FilePlan]) -> None:
+        """Alle Prüfungen bestanden — der Lauf beginnt."""
+        import copy
         self.cancel.clear()
         self.log.clear()
         # Zeilen ohne erreichbare Quelle laufen nie mit — auch nicht die
@@ -1628,6 +2010,16 @@ class MainWindow(ttk.Frame):
                 return   # Datei wurde während des Scans entfernt
             self._scan_failed.discard(path)
             job = self._pending_restore.pop(path, None)
+            # Größe/Änderungszeit der Quelle — ohne frischen Wert die des
+            # gespeicherten Jobs
+            identity = (msg[4] if len(msg) > 4 else None) or {
+                key: job[key] for key in (session.SOURCE_SIZE,
+                                          session.SOURCE_MTIME)
+                if job and key in job}
+            if identity:
+                self._source_ids[path] = identity
+            else:
+                self._source_ids.pop(path, None)
             if job is not None:
                 # Wiederhergestellter Job: Regeln SEINES Profils, nicht des
                 # gerade aktiven — self.profile bleibt dabei unangetastet
@@ -1712,6 +2104,16 @@ class MainWindow(ttk.Frame):
             self._on_source(msg[1], msg[2])
         elif kind == "SOURCE_DONE":
             self._on_source_done()
+        elif kind == "MOVED":
+            self._on_moved(msg[1])
+        elif kind == "RELINK_FOLDER":
+            self._relink_dialog(msg[1], msg[2])
+        elif kind == "OUTPUT_DIR":
+            self._out_watch.end_check()
+            self._on_output_finding(msg[1], msg[2])
+            self._schedule_source_check()
+        elif kind == "START_CHECKED":
+            self._on_start_checked(*msg[1:])
         elif kind == "UPDATE":
             self._show_update(msg[1])
         elif kind == "TOOL_LATEST":
@@ -1761,6 +2163,7 @@ class MainWindow(ttk.Frame):
             return
         for path in done:
             self.plans.pop(path, None)
+            self._source_ids.pop(path, None)
             self.file_list.remove(path)
         self.log.log(f"{n_text(len(done), 'erledigte Datei', 'erledigte Dateien')} "
                      f"aus der Liste entfernt.", "dim")

@@ -85,6 +85,22 @@ class FileList(ttk.Frame):
             self.tree.set(path, "status", status)
         self.tree.item(path, tags=(tag,) if tag else ())
 
+    def rename(self, old: str, new: str, **row) -> None:
+        """Zeile auf einen neuen Pfad umschlüsseln (iid = Pfad): gleicher
+        Platz in der Liste, Markierung bleibt; `row` wie bei update_file."""
+        tree = self.tree
+        if not tree.exists(old) or tree.exists(new):
+            return
+        selected = old in tree.selection()
+        tree.insert("", tree.index(old), iid=new, text=f" {Path(new).name}",
+                    values=tree.item(old, "values"),
+                    tags=tree.item(old, "tags"))
+        if selected:
+            tree.selection_set(new)
+        tree.delete(old)
+        if row:
+            self.update_file(new, **row)
+
     def remove_selected(self) -> list[str]:
         removed = list(self.tree.selection())
         for iid in removed:

@@ -28,8 +28,8 @@ from core.session import SourceWatch
 from tests import test_befunde_hauptfenster as hauptfenster
 from tests.helpers import film_std, profile_de
 from tests.test_befunde_hauptfenster import (
-    REMUX, _add, _log_text, _pump_sources, _restore, _saved_session,
-    _scanned, _shown, _tools_ok, _wait_for, builtin, film_at)
+    REMUX, _add, _log_text, _pump_sources, _restore, _run_start,
+    _saved_session, _scanned, _shown, _tools_ok, _wait_for, builtin, film_at)
 
 # dieselben Fixtures wie dort: config.json in tmp_path, Scans ersetzt
 tk_root = hauptfenster.tk_root
@@ -464,8 +464,7 @@ def test_ui_start_uebergeht_wartende_zeilen_mit_hinweis(win, tmp_path):
     _tools_ok(win)
     text = win.start_btn.cget("text")
     assert "— 1 Datei ·" in text                      # nur die bereite
-    win._start()
-    win._worker.join(3)
+    _run_start(win)
     (run,) = win.runs
     assert [p.media.path for p in run] == [here]
     assert ("1 Datei übersprungen — Laufwerk nicht verbunden; sie bleibt "
@@ -503,8 +502,7 @@ def test_ui_start_waehrend_der_startpruefung_nennt_die_zeile(win, tmp_path,
     _scanned(win, here)
     assert _row(win, nas)[1] == "wird geprüft"
     _tools_ok(win)
-    win._start()
-    win._worker.join(3)
+    _run_start(win)
     (run,) = win.runs
     assert [p.media.path for p in run] == [here]
     assert ("1 Datei übersprungen — Quelle wird noch geprüft; sie bleibt in "
@@ -565,8 +563,7 @@ def test_ui_gemischte_zeilen_rueckfrage_und_startprotokoll(win, tmp_path,
     assert win.file_list.paths() == [usb, moved, nas, here]
 
     _tools_ok(win)
-    win._start()
-    win._worker.join(3)
+    _run_start(win)
     assert [p.media.path for p in win.runs[0]] == [here]
     assert ("3 Dateien übersprungen — Laufwerk nicht verbunden, Datei nicht "
             "gefunden oder Quelle wird noch geprüft; sie bleiben in der "
@@ -721,8 +718,9 @@ def test_ui_auswahl_wartender_zeile_zeigt_hinweis_und_sperrt_panel(
     assert win.track_table.tree.get_children() == ()   # keine Spuren
     assert win.tracks_label.cget("text") == "SPUREN · film.mkv"
     assert win.warn_label.cget("text") == (
-        "⚠ Laufwerk nicht verbunden — sobald es wieder da ist, liest "
-        "Spurwerk die Datei automatisch ein.")
+        "⚠ Laufwerk nicht verbunden — sobald es wieder da ist, auch unter "
+        "einem anderen Buchstaben, liest Spurwerk die Datei automatisch "
+        "ein; sonst Rechtsklick → „Datei neu zuordnen …“.")
     assert f"Profil „{REMUX}“" in win.preview_label.cget("text")
     assert not _shown(win.stereo_panel)
     # nichts landet versehentlich im Plan der zuvor markierten Datei

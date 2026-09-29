@@ -304,9 +304,12 @@ def make_win(tk_root, tmp_path, monkeypatch):
     monkeypatch.setattr(appconfig, "CONFIG_FILE", tmp_path / "config.json")
     monkeypatch.setattr(appconfig, "LEGACY_INI", tmp_path / "config.ini")
     monkeypatch.setattr(appconfig, "base_path", lambda: tmp_path)
-    # „Laufwerke“ sind Ordner unter tmp_path — nie echte Laufwerksbuchstaben
+    # „Laufwerke“ sind Ordner unter tmp_path — nie echte Laufwerksbuchstaben;
+    # auch die Suche unter anderem Buchstaben sieht keine (Tests stellen
+    # simulierte ein, siehe test_laufwerk_ausgabe.py)
     monkeypatch.setattr(session, "drive_root",
                         _test_drive_root(tmp_path, session.drive_root))
+    monkeypatch.setattr(session, "present_drives", lambda: [])
 
     real_scan_worker = mw.MainWindow._scan_worker
     started: list[str] = []
@@ -392,9 +395,10 @@ def _saved_session(tmp_path: Path) -> list[dict]:
 
 def _pump_sources(win, timeout: float = 3.0) -> None:
     """Die laufende Quellen-Prüfung abschließen: Worker-Meldungen wie
-    _poll_queue abarbeiten, bis „SOURCE_DONE“ verarbeitet ist."""
+    _poll_queue abarbeiten, bis „SOURCE_DONE“ verarbeitet ist — und die
+    anschließende Suche unter anderen Laufwerksbuchstaben („MOVED“)."""
     end = time.monotonic() + timeout
-    while win._watch.checking:
+    while win._watch.checking or win._watch.searching:
         assert time.monotonic() < end, "Zeitüberschreitung"
         try:
             win._handle_message(win.ui_q.get(timeout=0.02))
@@ -407,6 +411,21 @@ def _restore(win) -> None:
     der Quellen (erreichbare werden danach gescannt)."""
     win._restore_session()
     _pump_sources(win)
+
+
+def _run_start(win, timeout: float = 3.0) -> None:
+    """Start wie F5 — die Überschreib-Prüfung läuft im Hintergrund: ihre
+    Antwort abarbeiten, dann den Lauf (falls einer beginnt) abwarten."""
+    win._start()
+    end = time.monotonic() + timeout
+    while win._starting:
+        assert time.monotonic() < end, "Zeitüberschreitung"
+        try:
+            win._handle_message(win.ui_q.get(timeout=0.02))
+        except queue.Empty:
+            pass
+    if win._worker is not None:
+        win._worker.join(timeout)
 
 
 # 1 ─────────────────────────────────────────────────────────────────────────
@@ -601,8 +620,7 @@ def test_ui_f5_uebernimmt_getippten_spurnamen(win, tmp_path):
     assert win.plans[path].stereo_sources()
     _tools_ok(win)
     win.trackname_var.set("Deutsch Stereo (Nachtmodus)")   # kein FocusOut
-    win._start()
-    win._worker.join(3)
+    _run_start(win)
     (run,) = win.runs
     assert run[0].stereo.track_name == "Deutsch Stereo (Nachtmodus)"
 
@@ -619,8 +637,7 @@ def test_ui_start_kurz_nach_lauf_verarbeitet_fertige_nicht_erneut(win,
     win._on_batch_done(1, 1, False)                # Aufräumen erst in 1,5 s
     assert win._done_removal is not None
     _tools_ok(win)
-    win._start()
-    win._worker.join(3)
+    _run_start(win)
     (run,) = win.runs
     assert [p.media.path for p in run] == [pb]
     assert pa not in win.plans and win._done_removal is None
@@ -663,8 +680,7 @@ def test_ui_tmdb_titel_nach_start_erst_nach_dem_lauf(win, tmp_path):
     _scanned(win, pa)
     _scanned(win, pb)
     _tools_ok(win)
-    win._start()
-    win._worker.join(3)
+    _run_start(win)
     (run,) = win.runs
     written = {p.media.path: p.output_path for p in run}
     assert win._running

@@ -91,6 +91,27 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   einzelne heraus, „Leeren" fragt vorher nach — auch, solange die Prüfung
   noch läuft. Geprüft wird im Hintergrund, ein nicht erreichbares
   Netzlaufwerk bremst den Start nicht mehr aus.
+- **USB-Platte unter anderem Laufwerksbuchstaben** (F: statt E:): Spurwerk
+  findet die wartende Datei dort selbst und liest sie mit allen
+  Einstellungen ein, am selben Platz der Warteschlange; eine manuell
+  gewählte Ausgabe auf der alten Platte zieht mit. Übernommen wird nur ein
+  eindeutiger Fund (gleiche Dateigröße) — liegt die Datei auf mehreren
+  Laufwerken, sagt das Protokoll es an und die Zeile wartet weiter. Ein
+  getrenntes Netzlaufwerk, das nicht antwortet, hält weder die Suche noch
+  die Prüfung der übrigen Zeilen auf.
+- **„Datei neu zuordnen …"** (Rechtsklick auf eine Zeile mit „Laufwerk
+  fehlt" oder „Datei fehlt"): Datei am neuen Ort auswählen, die
+  Einstellungen bleiben. Steht die gewählte Datei schon in der
+  Warteschlange, ändert sich nichts.
+- **Fester Ausgabeordner auf einem getrennten NAS** lässt den
+  Programmstart nicht mehr hängen und wird nicht mehr still auf
+  „Quellordner" zurückgesetzt: Der Ordner bleibt eingestellt, der Knopf
+  zeigt „⚠ nicht erreichbar", das Protokoll sagt es an, und Start
+  verweigert mit klarer Meldung, bis der Ordner wieder erreichbar ist
+  (Spurwerk prüft das selbst) oder ein anderer gewählt wird. Auch die
+  Frage „Ausgabedatei existiert bereits" prüft jetzt im Hintergrund.
+  Ein gelöschter Ausgabeordner auf einem vorhandenen Laufwerk bleibt
+  ebenfalls eingestellt und wird beim Start wieder angelegt.
 - **Keine Ausgabe überschreibt mehr die Quelle eines anderen Jobs**
   (z. B. „Film.mkv" und „Film_remux.mkv" im selben Ordner): Vor dem Start
   nennt eine Meldung beide Dateien, im Lauf wird der Job übersprungen.
