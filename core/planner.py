@@ -14,7 +14,11 @@ from .langs import UND, display_name
 from .model import (Action, FilePlan, MediaInfo, Origin, RuleProfile, Track,
                     TrackDecision)
 
-_COMMENTARY_RE = re.compile(r"kommentar|commentary|director", re.IGNORECASE)
+# Nur echte Kommentar-Wörter: „Director's Cut“/„Regiefassung“ ist die
+# Filmfassung, keine Kommentarspur — die Hauptspur darf nie wegfallen.
+_COMMENTARY_RE = re.compile(
+    r"kommentar|commentary|director[’'´`]?s?\s+(?:audio\s+)?comment",
+    re.IGNORECASE)
 
 
 def is_commentary(track: Track) -> bool:
