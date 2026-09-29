@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=8
+# Release-Build (build.ps1) - exakt gepinnt, damit ein Neubau dieselbe EXE ergibt
+pyinstaller==6.22.3

@@ -1,3 +1,7 @@
-ttkbootstrap>=1.20.4
-tkinterdnd2>=0.4
-pillow>=10
+# Laufzeit-Abhaengigkeiten (werden in die EXE eingebettet).
+# Obergrenzen bewusst: ttkbootstrap 2.x ist ein Umbau, gegen den Spurwerk
+# nicht geprueft ist; tkinterdnd2 < 0.6 laedt unter Tcl/Tk 9 (Python 3.14)
+# kein tkdnd.
+ttkbootstrap>=1.20.4,<2
+tkinterdnd2>=0.6,<0.7
+pillow>=10,<13
