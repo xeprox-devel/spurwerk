@@ -2,8 +2,8 @@
 # Aufruf:  .\build.ps1           ->  dist\Spurwerk.exe + dist\THIRD_PARTY_LICENSES.txt
 #          .\build.ps1 -OhneKey  ->  dasselbe, sicher ohne eingebauten TMDb-Key
 #
-# Fuer den x86-Build dieselben Schritte in einer 32-bit-Python-Installation
-# ausfuehren (venv32 anlegen, requirements installieren, build.ps1 starten).
+# Spurwerk gibt es nur als 64-bit-EXE (kein x86-Build, Entscheidung vom
+# 29.09.2026).
 #
 # Erwartet .venv im Projektordner (Python 3.14, siehe DEVELOPMENT.md).
 # Bricht beim ersten Fehler ab - "Build fertig" erscheint nur, wenn die EXE

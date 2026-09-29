@@ -52,7 +52,7 @@ mkvmerge-Durchlauf** (kein Extrahieren, kein FFmpeg, sekundenschnell, bitgenau).
 - Fallback: `https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip` (160 MB, GitHub-CDN = höchste Verfügbarkeit; git-master-Snapshot; Checksummen: `.../latest/download/checksums.sha256`, Format `hash␣␣name`; kein API-Call/Rate-Limit — der latest-Redirect ist ein normaler Web-Redirect)
 - Beide .sha256-Formate unterscheiden sich → Parser muss beide können
 
-**32-bit-Quellen** (für Systeme mit 32-bit-Windows, verifiziert 04.07.2026):
+**32-bit-Quellen** (für Systeme mit 32-bit-Windows, verifiziert 04.07.2026) — *aufgehoben am 29.09.2026: kein x86-Build mehr, siehe Entscheidung 14*:
 - MKVToolNix: gleiches Muster, `mkvtoolnix-32-bit-{v}.zip` (84,4 MB, HTTP 200)
 - FFmpeg: `https://github.com/sudo-nautilus/FFmpeg-Builds-Win32/releases/latest/download/ffmpeg-master-latest-win32-gpl.zip` (92,7 MB, HTTP 200; aktiv gepflegter Community-Fork des BtbN-Buildsystems — gyan.dev und BtbN selbst bauen nur noch x64)
 
@@ -327,7 +327,7 @@ senken, wo alles andere draufbaut.
 
 ### Phase 6 — Packaging & Verteilung
 - PyInstaller `--onefile --noconsole` + Spurwerk-Icon; tkinterdnd2-Hook prüfen; HTTPS im gefrorenen Build testen (Zertifikat-Store)
-- **Zwei Builds:** x64 (primär) und x86 (für 32-bit-Windows; braucht eine separate 32-bit-Python-Installation zum Bauen)
+- ~~**Zwei Builds:** x64 (primär) und x86 (für 32-bit-Windows; braucht eine separate 32-bit-Python-Installation zum Bauen)~~ — *aufgehoben am 29.09.2026: nur x64*
 - Versionsnummer in App + Fenstertitel; kurzes README (Screenshots, Tool-Quellen, Lizenzen)
 - Virenscanner-Realität: unsignierte PyInstaller-EXEs schlagen gern an → Hinweis im README; optional später Code-Signing
 - **Akzeptanz:** frische Windows-VM ohne Python: EXE starten → Onboarding → Download → Konvertierung erfolgreich
@@ -364,6 +364,7 @@ FFmpeg:
     (Top-Ordner ist bei gyan versioniert!) → flach nach tools/
 ```
 
+*Aufgehoben am 29.09.2026 — es gibt nur noch x64, der Downloader lädt immer die x64-Builds:*
 Architektur-Wahl: Der Downloader ermittelt zuerst die **OS-Architektur** (64/32-bit-Windows,
 nicht die Python-Bitness) und wählt danach die URL-Sätze aus 2.1 — auf 32-bit-Windows also
 `mkvtoolnix-32-bit-{v}.zip` und den sudo-nautilus-win32-Build (Member-Pfade sind identisch).
@@ -408,4 +409,4 @@ klare Meldung + Buttons [Erneut versuchen] [Download-Seite im Browser öffnen]
 
 12. **Branding: „Spurwerk"** (entschieden 2026-07-04). Fenstertitel „Spurwerk", Beschreibung „Spurwerk — MKV Remuxer & Audio-Studio". Namens-Kollisionscheck durchgeführt: frei („Stellwerk" war der erste Kandidat, ist aber von Modellbahn-Software besetzt). Bildmarke: Gleisplan mit abzweigender violetter Spur (= die neue Stereospur); Brand-Sheet mit Wortmarke, Icon-Konzept und allen Tokens liegt als Artifact vor.
 13. **Akzentfarbe: „Nachtviolett"** (entschieden 2026-07-04). Theme-Name `spurwerk-dark`; Grund ist ein violett-stichiges Schwarz statt neutralem Grau. Kerntoken: primary `#8b5cf6`, selectbg/hover `#6d28d9`, bg `#14121a`, Fläche/inputbg `#1c1926`, border `#2c2838`, fg `#e9e6f2`, success `#2dd4a7`, danger `#ff5370`, warning `#f5a623`, info `#4aa8ff`. **Farb-Semantik:** Violett ist exklusiv für „neu erzeugt" reserviert (Stereo-Spur, Primäraktionen), Grün = behalten/verlustfrei, Rot = entfernen — identisch in Tabelle, Vorschau, Log und Toasts.
-14. **32-bit-Windows wird unterstützt** (entschieden 2026-07-04). Verifiziert am 04.07.2026: MKVToolNix gibt es als 32-bit-ZIP im selben URL-Muster (`mkvtoolnix-32-bit-{v}.zip`, 84,4 MB, HTTP 200); für FFmpeg existiert kein gyan.dev/BtbN-32-bit-Build mehr, aber der aktiv gepflegte Community-Fork **sudo-nautilus/FFmpeg-Builds-Win32** liefert eine stabile latest-URL (`.../releases/latest/download/ffmpeg-master-latest-win32-gpl.zip`, 92,7 MB, HTTP 200). Der Downloader wählt die Quelle nach **OS-Architektur** (nicht Python-Bitness — ein 32-bit-Prozess auf 64-bit-Windows startet problemlos 64-bit-Tools; entscheidend ist `PROCESSOR_ARCHITEW6432`/`platform.machine()` des OS). Phase 6 liefert zwei PyInstaller-Builds (x64 + x86; der x86-Build braucht eine 32-bit-Python-Installation). Restrisiko: Der win32-FFmpeg-Fork ist ein Community-Projekt — beim Implementieren prüfen, ob dessen Release eine `checksums.sha256` mitliefert; sonst Download ohne Hash-Prüfung nur nach Nutzer-Bestätigung + manueller Pfad als Ausweg.
+14. ~~**32-bit-Windows wird unterstützt**~~ — **aufgehoben am 29.09.2026 (Nutzerentscheidung): nur noch der 64-bit-Build.** Ein x86-Release wurde nie veröffentlicht, und die 32-bit-FFmpeg-Quelle ist seit 2023 ungepflegt und ohne Prüfsummen. Ursprüngliche Entscheidung (entschieden 2026-07-04): Verifiziert am 04.07.2026: MKVToolNix gibt es als 32-bit-ZIP im selben URL-Muster (`mkvtoolnix-32-bit-{v}.zip`, 84,4 MB, HTTP 200); für FFmpeg existiert kein gyan.dev/BtbN-32-bit-Build mehr, aber der aktiv gepflegte Community-Fork **sudo-nautilus/FFmpeg-Builds-Win32** liefert eine stabile latest-URL (`.../releases/latest/download/ffmpeg-master-latest-win32-gpl.zip`, 92,7 MB, HTTP 200). Der Downloader wählt die Quelle nach **OS-Architektur** (nicht Python-Bitness — ein 32-bit-Prozess auf 64-bit-Windows startet problemlos 64-bit-Tools; entscheidend ist `PROCESSOR_ARCHITEW6432`/`platform.machine()` des OS). Phase 6 liefert zwei PyInstaller-Builds (x64 + x86; der x86-Build braucht eine 32-bit-Python-Installation). Restrisiko: Der win32-FFmpeg-Fork ist ein Community-Projekt — beim Implementieren prüfen, ob dessen Release eine `checksums.sha256` mitliefert; sonst Download ohne Hash-Prüfung nur nach Nutzer-Bestätigung + manueller Pfad als Ausweg.

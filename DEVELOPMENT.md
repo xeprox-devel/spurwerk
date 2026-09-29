@@ -96,4 +96,5 @@ die EXE.
 Release-Ablauf: Version in `version.py` erhöhen → CHANGELOG-Eintrag aus
 [Unreleased] machen → Tests laufen lassen → `build.ps1` → `git tag vX.Y.Z`
 → `Spurwerk.exe` und `THIRD_PARTY_LICENSES.txt` ans Release hängen.
-Für den x86-Build dieselben Schritte in einer 32-bit-Python-Installation.
+Es gibt nur diesen 64-bit-Build — einen x86-Build (32-bit-Windows) gibt es
+nicht mehr (Entscheidung vom 29.09.2026).

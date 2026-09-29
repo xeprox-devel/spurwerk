@@ -26,6 +26,12 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   neue Werkzeuge) — das bisherige Zeichen ⭑ wurde in der fetten
   Kopfzeilen-Schrift nur als winziger Punkt dargestellt.
 
+### Entfernt
+- **32-bit-Windows (x86):** Spurwerk gibt es nur noch als 64-bit-EXE. Der
+  angekündigte, aber nie veröffentlichte x86-Build entfällt samt den
+  32-bit-Werkzeugquellen (darunter ein seit 2023 nicht mehr gepflegter
+  32-bit-FFmpeg-Build ohne Prüfsummen).
+
 ### Behoben
 - **Werkzeuge-Dialog: Meldungen verschwanden nach etwa einer Sekunde** —
   „Fertig" und vor allem Download-Fehler wurden von der anschließenden
@@ -40,8 +46,7 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 - **Keine 100-MB-Reste mehr in tools/:** Scheitert das Entpacken (EXE in
   Benutzung, Platte voll), wird die halbe `.part`-Datei aufgeräumt.
 - **Downloads ohne Prüfsumme werden angesagt** statt still als
-  „SHA-256-geprüft" zu gelten (32-bit-FFmpeg, dessen Quelle keine
-  Prüfsumme veröffentlicht; sonst nur, wenn eine Prüfsummen-Datei gerade
+  „SHA-256-geprüft" zu gelten (nur, wenn eine Prüfsummen-Datei gerade
   nicht abrufbar ist). dovi_tool bekommt seine Prüfsumme notfalls von der
   normalen Release-Seite, wenn die GitHub-API ausgelastet ist.
 - **Updates tauschen ein Werkzeug-Paket ganz oder gar nicht** (z. B.
@@ -56,9 +61,6 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   dovi_tool mit**; Knöpfe sind während eines Downloads sichtbar gesperrt,
   und eine gescheiterte Update-Prüfung zeigt nicht mehr den alten Stand
   an, als wäre gerade geprüft worden.
-- **32-bit-Windows:** „Fehlende Werkzeuge herunterladen" endete immer mit
-  einem Fehler, weil dovi_tool (gibt es nur für 64 bit) als fehlend
-  zählte. Die Zeile sagt jetzt „nur für 64-bit-Windows".
 - **Selbst gewähltes FFmpeg:** Ein `ffprobe.exe` im selben Ordner wird
   mitgenommen (vorher blieb die DV-Analyse gesperrt). Aktualisieren
   verwirft die eigenen Pfade für ffmpeg UND ffprobe gemeinsam — kein

@@ -7,14 +7,12 @@ Quellen (verifiziert 2026-07-04, siehe UMSETZUNGSPLAN.md Abschnitt 6):
   MKVToolNix  Version aus latest-release.xml.gz, dann offizielle portable
               ZIP (existiert seit v92, nur STORED/DEFLATE), SHA-256 aus
               sha256sums.txt. Die EXEs sind statisch gelinkt.
-  FFmpeg x64  gyan.dev release-essentials.zip (echtes Stable-Release,
+  FFmpeg      gyan.dev release-essentials.zip (echtes Stable-Release,
               .sha256 daneben); Fallback BtbN GitHub latest.
-  FFmpeg x86  Community-Build sudo-nautilus/FFmpeg-Builds-Win32.
-  dovi_tool   GitHub-Release von quietvoid (nur 64-bit).
+  dovi_tool   GitHub-Release von quietvoid.
 
-Die Architektur richtet sich nach dem BETRIEBSSYSTEM (nicht nach der
-Python-Bitness): ein 32-bit-Prozess auf 64-bit-Windows startet problemlos
-64-bit-Tools.
+Spurwerk gibt es nur als 64-bit-EXE (Entscheidung vom 29.09.2026) —
+geladen werden deshalb immer die x64-Builds der Werkzeuge.
 """
 
 from __future__ import annotations
@@ -22,8 +20,6 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-import os
-import platform
 import re
 import shutil
 import threading
@@ -46,8 +42,6 @@ MKVTOOLNIX_DL = "https://mkvtoolnix.download/windows/releases"
 GYAN_ZIP = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 GYAN_VERSION = "https://www.gyan.dev/ffmpeg/builds/release-version"
 BTBN_BASE = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download"
-WIN32_BASE = ("https://github.com/sudo-nautilus/FFmpeg-Builds-Win32"
-              "/releases/latest/download")
 
 DOVI_API = "https://api.github.com/repos/quietvoid/dovi_tool/releases/latest"
 DOVI_LATEST = "https://github.com/quietvoid/dovi_tool/releases/latest"
@@ -81,12 +75,6 @@ class DownloadResult:
     version: str
     files: list[str] = field(default_factory=list)
     verified: bool = True    # False: Quelle ohne Prüfsumme (wird angesagt)
-
-
-def os_is_64bit() -> bool:
-    if os.environ.get("PROCESSOR_ARCHITEW6432"):
-        return True
-    return platform.machine().endswith("64")
 
 
 # ── HTTP-Bausteine ────────────────────────────────────────────────────────
@@ -275,8 +263,7 @@ def download_mkvtoolnix(tools_dir: Path, progress: ProgressCb,
     except (OSError, gzip.BadGzipFile, ET.ParseError, ValueError) as exc:
         raise DownloadError(
             f"mkvtoolnix.download nicht erreichbar: {exc}") from exc
-    arch = "64" if os_is_64bit() else "32"
-    filename = f"mkvtoolnix-{arch}-bit-{version}.zip"
+    filename = f"mkvtoolnix-64-bit-{version}.zip"
     url = f"{MKVTOOLNIX_DL}/{version}/{filename}"
 
     progress("Lade Prüfsummen …", None)
@@ -311,28 +298,23 @@ def download_mkvtoolnix(tools_dir: Path, progress: ProgressCb,
 def download_ffmpeg(tools_dir: Path, progress: ProgressCb,
                     cancel: threading.Event) -> DownloadResult:
     tools_dir.mkdir(parents=True, exist_ok=True)
-    if os_is_64bit():
-        try:
-            return _ffmpeg_from(GYAN_ZIP, f"{GYAN_ZIP}.sha256",
-                                _gyan_version(), tools_dir, progress, cancel)
-        except SourceUnreachable as exc:
-            # Ersatzquelle nur, wenn gyan.dev nicht erreichbar ist — und nur
-            # beim Erst-Download: ein Update tauscht kein stabiles Release
-            # gegen einen Entwicklungs-Snapshot, der danach aus der
-            # Update-Prüfung fiele. Prüfsummen-Fehler oder eine belegte EXE
-            # werden gemeldet, nie umgangen.
-            if cancel.is_set() or (tools_dir / "ffmpeg.exe").exists():
-                raise
-            progress(f"gyan.dev nicht erreichbar ({exc}) — "
-                     f"wechsle zu GitHub-Fallback …", None)
-            return _ffmpeg_from(
-                f"{BTBN_BASE}/ffmpeg-master-latest-win64-gpl.zip",
-                f"{BTBN_BASE}/checksums.sha256",
-                "master-latest", tools_dir, progress, cancel)
-    return _ffmpeg_from(
-        f"{WIN32_BASE}/ffmpeg-master-latest-win32-gpl.zip",
-        f"{WIN32_BASE}/checksums.sha256",
-        "master-latest (win32)", tools_dir, progress, cancel)
+    try:
+        return _ffmpeg_from(GYAN_ZIP, f"{GYAN_ZIP}.sha256",
+                            _gyan_version(), tools_dir, progress, cancel)
+    except SourceUnreachable as exc:
+        # Ersatzquelle nur, wenn gyan.dev nicht erreichbar ist — und nur
+        # beim Erst-Download: ein Update tauscht kein stabiles Release
+        # gegen einen Entwicklungs-Snapshot, der danach aus der
+        # Update-Prüfung fiele. Prüfsummen-Fehler oder eine belegte EXE
+        # werden gemeldet, nie umgangen.
+        if cancel.is_set() or (tools_dir / "ffmpeg.exe").exists():
+            raise
+        progress(f"gyan.dev nicht erreichbar ({exc}) — "
+                 f"wechsle zu GitHub-Fallback …", None)
+        return _ffmpeg_from(
+            f"{BTBN_BASE}/ffmpeg-master-latest-win64-gpl.zip",
+            f"{BTBN_BASE}/checksums.sha256",
+            "master-latest", tools_dir, progress, cancel)
 
 
 def _gyan_version() -> str:
@@ -424,8 +406,6 @@ def download_dovi_tool(tools_dir: Path, progress: ProgressCb,
                        cancel: threading.Event) -> DownloadResult:
     """dovi_tool von GitHub — die Versionsnummer steckt im Asset-Namen,
     darum führt der Weg über die GitHub-API (releases/latest)."""
-    if not os_is_64bit():
-        raise DownloadError("dovi_tool gibt es nur für 64-bit-Windows.")
     tools_dir.mkdir(parents=True, exist_ok=True)
     progress("Ermittle aktuelle dovi_tool-Version …", None)
     try:
@@ -464,11 +444,6 @@ DOWNLOADERS = {
 }
 
 
-def can_download(kind: str) -> bool:
-    """Gibt es für dieses System eine Quelle? dovi_tool: nur 64-bit."""
-    return kind in DOWNLOADERS and (kind != "dovi_tool" or os_is_64bit())
-
-
 # ── Update-Prüfung ────────────────────────────────────────────────────────
 
 
@@ -477,10 +452,8 @@ def _latest_mkvtoolnix() -> str:
 
 
 def _latest_ffmpeg() -> str | None:
-    # Nur gyan.dev nennt eine Release-Nummer; die 32-bit-Quelle liefert
-    # ausschließlich „master-latest“-Snapshots ohne vergleichbare Version
-    if not os_is_64bit():
-        return None
+    # gyan.dev nennt die Release-Nummer; die BtbN-Ersatzquelle liefert nur
+    # „master-latest“-Snapshots ohne vergleichbare Version
     return _release_number(_get_text(GYAN_VERSION, CHECK_TIMEOUT))
 
 
@@ -488,8 +461,6 @@ def _latest_dovi_tool() -> str | None:
     # Die Weiterleitung von releases/latest (…/tag/2.3.4) statt der API:
     # zählt nicht gegen GitHubs API-Limit (60 Anfragen/Stunde je IP), das
     # sich die App-Update-Prüfung und der eigentliche Download teilen
-    if not os_is_64bit():
-        return None
     tag_url = _final_url(DOVI_LATEST, CHECK_TIMEOUT)
     return _release_number(tag_url.rstrip("/").rsplit("/", 1)[-1])
 

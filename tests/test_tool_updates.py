@@ -123,7 +123,6 @@ class TestProbeVersionstext:
 
 class TestLatestVersions:
     def test_alle_quellen_erreichbar(self, monkeypatch):
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
         monkeypatch.setattr(downloader, "mkvtoolnix_latest_version",
                             lambda timeout=None: "102.0")
         monkeypatch.setattr(downloader, "_get_text",
@@ -135,7 +134,6 @@ class TestLatestVersions:
             "mkvtoolnix": "102.0", "ffmpeg": "9.0.2", "dovi_tool": "2.3.4"}
 
     def test_ausfall_einer_quelle_wirft_nie(self, monkeypatch):
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
 
         def offline(*_a, **_k):
             raise OSError("keine Verbindung")
@@ -150,18 +148,9 @@ class TestLatestVersions:
         assert latest["ffmpeg"] is None   # Fehlerseite ist keine Version
         assert latest["dovi_tool"] == "2.3.4"
 
-    def test_32bit_ohne_vergleichbare_quellen(self, monkeypatch):
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: False)
-        monkeypatch.setattr(downloader, "mkvtoolnix_latest_version",
-                            lambda timeout=None: "102.0")
-        latest = downloader.latest_versions()
-        assert latest == {"mkvtoolnix": "102.0", "ffmpeg": None,
-                          "dovi_tool": None}
-
     def test_dovi_weiterleitung_ohne_tag_ist_keine_version(self, monkeypatch):
         # landet die Weiterleitung nicht auf …/tag/<nr> (z. B. Login-Seite),
         # darf daraus keine Version werden
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
         monkeypatch.setattr(
             downloader, "_final_url", lambda url, timeout=None:
             "https://github.com/quietvoid/dovi_tool/releases")
@@ -193,7 +182,6 @@ class TestDoviToolPruefsumme:
         if digest is not None:
             asset["digest"] = digest
         release = {"tag_name": "2.3.4", "assets": [asset]}
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
         monkeypatch.setattr(downloader, "_get_bytes",
                             lambda url, timeout=None:
                             json.dumps(release).encode())
@@ -232,7 +220,6 @@ class TestDoviToolPruefsumme:
     def test_api_limit_ersatzweg_ueber_release_link(self, monkeypatch,
                                                      tmp_path):
         payload = self._zip_bytes()
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
 
         def api_limit(url, timeout=None):
             raise OSError("HTTP Error 403: rate limit exceeded")
@@ -270,7 +257,6 @@ class TestDoviToolPruefsumme:
                 f'value="sha256:{"1" * 64}"></button>'
                 f'<button aria-label="Copy to clipboard digest for {name}" '
                 f'type="button" value="sha256:{good}" class="Button">')
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
 
         def fake_get_bytes(url, timeout=None):
             if "api.github.com" in url:
@@ -302,15 +288,6 @@ class TestDoviToolPruefsumme:
 
 class TestNachbesserungen:
     """Befunde aus der Projektprüfung rund um die Werkzeuge."""
-
-    def test_dovi_tool_nur_auf_64bit_ladbar(self, monkeypatch):
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: False)
-        assert not downloader.can_download("dovi_tool")
-        assert downloader.can_download("mkvtoolnix")
-        assert downloader.can_download("ffmpeg")
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
-        assert downloader.can_download("dovi_tool")
-        assert not downloader.can_download("tesseract")
 
     def test_ffprobe_neben_selbst_gewaehltem_ffmpeg(self, tmp_path):
         own = tmp_path / "eigenes"
@@ -346,16 +323,15 @@ class TestNachbesserungen:
                 lambda *_: None)
         assert not list(tmp_path.glob("*.part"))
 
-    def test_win32_ffmpeg_wird_als_ungeprueft_gemeldet(self, monkeypatch,
-                                                       tmp_path):
+    def test_ohne_pruefsumme_wird_als_ungeprueft_gemeldet(self, monkeypatch,
+                                                          tmp_path):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("x/bin/ffmpeg.exe", b"MZ")
             zf.writestr("x/bin/ffprobe.exe", b"MZ")
         payload = buf.getvalue()
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: False)
 
-        def no_sums(url, timeout=None):
+        def no_sums(url, timeout=None):   # .sha256 gerade nicht abrufbar
             raise OSError("HTTP Error 404")
         monkeypatch.setattr(downloader, "_get_text", no_sums)
 
@@ -416,7 +392,6 @@ class TestNachbesserungen:
         assert not list(tmp_path.glob("*.part"))
 
     def _gyan_setup(self, monkeypatch, gyan_error: Exception):
-        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
         monkeypatch.setattr(downloader, "_gyan_version", lambda: "9.0.2")
         btbn = self._ffmpeg_zip(b"btbn-master")
         calls = []

@@ -172,10 +172,7 @@ class ToolManagerDialog(ttk.Toplevel):
         browse.pack(side="left")
         _tip(browse, f"Vorhandene {exe}.exe selbst auswählen")
         action = None
-        if not downloader.can_download(kind):
-            ttk.Label(buttons, text="nur für 64-bit-Windows",
-                      foreground=theme.MUTED).pack(side="left", padx=(8, 0))
-        else:
+        if kind in downloader.DOWNLOADERS:
             action = ttk.Button(buttons, text="⬇  Laden", width=_ACTION_WIDTH,
                                 bootstyle="primary-outline",
                                 command=lambda k=kind: self._download(only=k))
@@ -272,17 +269,15 @@ class ToolManagerDialog(ttk.Toplevel):
                 return not (pr and pr.ok)
             return False
 
-        # was dieses System gar nicht laden kann (dovi_tool auf 32 bit),
-        # zählt nicht als fehlend — sonst endete jeder Lauf mit einem Fehler
         return [k for k in self.rows
-                if downloader.can_download(k) and incomplete(k)]
+                if k in downloader.DOWNLOADERS and incomplete(k)]
 
     def _outdated(self) -> list[str]:
         if not self._latest:
             return []
         return [u.kind for u in toolchain.pending_updates(self._status,
                                                           self._latest)
-                if downloader.can_download(u.kind)]
+                if u.kind in downloader.DOWNLOADERS]
 
     def _main_action(self) -> tuple[str, list[str]]:
         """(Beschriftung, Pakete) des Hauptknopfs. Fehlt ein Pflicht-
