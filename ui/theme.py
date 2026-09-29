@@ -110,10 +110,25 @@ def make_status_dot(master: tk.Misc, color: str) -> PhotoImage:
 
 
 def apply_dark_titlebar(window: tk.Misc) -> None:
-    """Windows-DWM-Hack: dunkle Titelleiste (Attribut 20, ältere Builds 19)."""
+    """Windows-DWM-Hack: dunkle Titelleiste (Attribut 20, ältere Builds 19).
+
+    Das Attribut sitzt am Fensterrahmen, den Tk erst beim ersten Anzeigen
+    anlegt. Ein noch LEERES, nie gezeigtes Fenster (Hauptfenster: Aufruf vor
+    dem Aufbau) bleibt dafür durchsichtig, bis das Start-Layout steht —
+    sonst blitzt ein leeres Mini-Fenster auf, das nach dem Aufbau wächst und
+    springt. Dialoge (schon gefüllt) wie bisher.
+    """
     if sys.platform != "win32":
         return
+    hidden = False
     try:
+        hidden = (not window.winfo_ismapped()
+                  and window.state() == "normal"
+                  and not window.winfo_children())
+        if hidden:
+            # durchsichtig statt withdraw: Tk führt Größe/Position nur für
+            # angezeigte Fenster nach — so zentriert das Start-Layout richtig
+            window.attributes("-alpha", 0.0)
         window.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         value = ctypes.c_int(1)
@@ -122,5 +137,37 @@ def apply_dark_titlebar(window: tk.Misc) -> None:
                     hwnd, attr, ctypes.byref(value),
                     ctypes.sizeof(value)) == 0:
                 break
-    except OSError:
+    except (OSError, tk.TclError):
         pass
+    if hidden:
+        _show_after_first_layout(window)
+
+
+def _show_after_first_layout(window: tk.Misc) -> None:
+    """Macht das vorbereitete Fenster im ZWEITEN Timer-Durchlauf sichtbar:
+    Der erste enthält das Start-Layout der App (after(0) — Größe, gemerkte
+    Position, Zentrieren); danach erscheint das Fenster gleich fertig an
+    seinem Platz."""
+    def show() -> None:
+        try:
+            window.update_idletasks()   # ausstehende Geometrie zuerst
+            window.attributes("-alpha", 1.0)
+            _drop_layered_style(window)
+        except (OSError, tk.TclError):
+            pass   # Fenster schon geschlossen
+
+    window.after(0, lambda: window.after(0, show))
+
+
+def _drop_layered_style(window: tk.Misc) -> None:
+    """Tk lässt nach „-alpha 1.0“ den Layered-Stil stehen; für ein wieder
+    deckendes Fenster empfiehlt Microsoft, ihn zu entfernen und neu zu
+    zeichnen — das Fenster ist danach wieder genau wie vorher."""
+    gwl_exstyle, ws_ex_layered = -20, 0x00080000
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetParent(window.winfo_id())
+    exstyle = user32.GetWindowLongW(hwnd, gwl_exstyle)
+    if exstyle & ws_ex_layered:
+        user32.SetWindowLongW(hwnd, gwl_exstyle, exstyle & ~ws_ex_layered)
+        # RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN
+        user32.RedrawWindow(hwnd, None, None, 0x4 | 0x1 | 0x400 | 0x80)

@@ -29,6 +29,7 @@ except ImportError:  # ältere 1.x
 
 import config as appconfig
 from core import dv as dv_analysis
+from core import session
 from core import tools as toolchain
 from core.commands import subtitle_automation_note
 from core.langs import display_name
@@ -89,6 +90,18 @@ class MainWindow(ttk.Frame):
         self._lock_buttons: list = []   # während des Laufs gesperrt
         self._lock_combos: list = []
         self._pending_restore: dict[str, dict] = {}   # Session-Wiederherstellung
+        # Sitzungs-Jobs, deren Quelle beim Start fehlte (USB/NAS) — bleiben
+        # gespeichert, bis das Laufwerk wieder da ist
+        self._deferred_jobs: list[dict] = []
+        self._scan_failed: set[str] = set()   # erneut analysierbar
+        self._save_warned = False             # Speicherfehler nur einmal melden
+        self._done_removal: str | None = None  # after-ID des Aufräumens
+        # Warnungen, die im Leerzustand anfielen — dort ist das Protokoll
+        # (Teil der Arbeitsansicht) unsichtbar
+        self._empty_notices: list[str] = []
+        # TMDb-Titel, die während eines Laufs für Dateien IM Lauf eintrafen —
+        # erst danach übernehmen (der Lauf schreibt den bisherigen Namen)
+        self._late_titles: dict[str, str] = {}
 
         self.columnconfigure(0, weight=1)
         self._build_header()
@@ -97,6 +110,11 @@ class MainWindow(ttk.Frame):
         self._restore_output_dir()
         self._sync_state()
         self._bind_shortcuts()
+        # Hinweis aus config.load() (beschädigte config.json o. ä.) — einmal
+        notice = getattr(cfg, "load_notice", "")
+        if notice:
+            cfg.load_notice = ""
+            self._warn(f"⚠ {notice}")
 
         self.after(80, self._poll_queue)
         self.after(120, self._restore_session)
@@ -214,6 +232,20 @@ class MainWindow(ttk.Frame):
         self.empty_rule = ttk.Label(self.empty, foreground=theme.MUTED,
                                     anchor="center", justify="center")
         self.empty_rule.grid(row=2, column=0, pady=(6, 12))
+
+        # Hinweise im Leerzustand (Startwarnungen, zurückgestellte Jobs) —
+        # wird erst gegridet, wenn es etwas zu melden gibt
+        self.empty_notice = ttk.Frame(self.empty)
+        self.empty_notice_label = ttk.Label(
+            self.empty_notice, foreground=theme.COLORS["warning"],
+            anchor="center", justify="center", wraplength=760)
+        self.empty_notice_label.grid(row=0, column=0)
+        self.discard_deferred_btn = ttk.Button(
+            self.empty_notice, bootstyle="secondary-outline",
+            command=self._discard_deferred)
+        _tip(self.discard_deferred_btn,
+             "Die gespeicherten Jobs aus der Warteschlange nehmen — die "
+             "Quelldateien bleiben unangetastet.")
 
     def _build_workspace(self) -> None:
         self.work = ttk.Frame(self)
@@ -452,13 +484,62 @@ class MainWindow(ttk.Frame):
             self.empty.grid_forget()
             self.work.grid(row=1, column=0, sticky="nsew")
             self.rowconfigure(1, weight=1)
+            # ab jetzt zeigt das (aufgeklappte) Protokoll die Warnungen
+            self._empty_notices.clear()
         else:
             self.work.grid_forget()
             self.empty.grid(row=1, column=0, sticky="nsew")
             self.empty_rule.configure(
                 text=f"Aktives Profil „{self.profile.name}“:\n"
                      f"{describe(self.profile)}")
+        self._refresh_empty_notice()
         self._autosize(allow_shrink=not self.plans)
+
+    def _warn(self, text: str) -> None:
+        """Warnung ins Protokoll (aufgeklappt). Im Leerzustand ist das
+        Protokoll unsichtbar — dort steht sie zusätzlich unter der Ablage."""
+        self.log.log(text, "warn")
+        self.log.set_expanded(True)
+        if not self.plans:
+            self._empty_notices.append(text)
+            self._refresh_empty_notice()
+            self._autosize(allow_shrink=True)
+
+    def _refresh_empty_notice(self) -> None:
+        """Hinweiszeile(n) im Leerzustand: gesammelte Warnungen und — solange
+        es sie gibt — die zurückgestellten Jobs samt „Verwerfen“ (der
+        „Leeren“-Button der Arbeitsansicht ist hier nicht erreichbar)."""
+        lines = list(self._empty_notices)
+        n = len(self._deferred_jobs)
+        if n:
+            rest = ("er bleibt gespeichert und kommt" if n == 1
+                    else "sie bleiben gespeichert und kommen")
+            lines.append(
+                f"⚠ {n_text(n, 'Job', 'Jobs')} der letzten Sitzung nicht "
+                f"gefunden (Laufwerk nicht verbunden?) — {rest} beim "
+                f"nächsten Start zurück, sobald das Laufwerk wieder da ist.")
+            self.discard_deferred_btn.configure(
+                text=("Gespeicherten Job verwerfen" if n == 1
+                      else "Gespeicherte Jobs verwerfen"))
+            self.discard_deferred_btn.grid(row=1, column=0, pady=(6, 0))
+        else:
+            self.discard_deferred_btn.grid_remove()
+        if lines:
+            self.empty_notice_label.configure(text="\n".join(lines))
+            self.empty_notice.grid(row=3, column=0, pady=(0, 12))
+        else:
+            self.empty_notice.grid_remove()
+
+    def _discard_deferred(self) -> None:
+        """Zurückgestellte Sitzungs-Jobs verwerfen — nur ihre gespeicherte
+        Konfiguration, die Quelldateien bleiben unangetastet."""
+        n = len(self._deferred_jobs)
+        self._deferred_jobs.clear()
+        if n:
+            jobs = n_text(n, "gespeicherter Job", "gespeicherte Jobs")
+            self.log.log(f"{jobs} der letzten Sitzung verworfen.", "dim")
+        self._sync_state()
+        self._safe_save()
 
     def _autosize(self, allow_shrink: bool = False) -> None:
         top = self.winfo_toplevel()
@@ -554,8 +635,9 @@ class MainWindow(ttk.Frame):
             self.stereo_panel.grid_remove()
 
     def _update_start_button(self) -> None:
-        ready = [p for p in self.plans.values()
-                 if p and p.status not in (FileStatus.RUNNING,)]
+        # erledigte Dateien zählen nicht mit — sie verlassen gleich die Liste
+        ready = [p for p in session.runnable_plans(self.plans.values())
+                 if p.status is not FileStatus.RUNNING]
         lossless = sum(len(p.kept_ids(t)) for p in ready if p
                        for t in ("video", "audio", "subtitles"))
         stereo = sum(len(p.stereo_sources()) for p in ready if p)
@@ -579,8 +661,10 @@ class MainWindow(ttk.Frame):
 
     def add_files(self, paths: list[str]) -> None:
         # Pfade kanonisieren: sonst landet dieselbe Datei über Slash-Form
-        # oder Groß-/Kleinschreibung doppelt in der Liste
-        known = {p.lower() for p in self.plans}
+        # oder Groß-/Kleinschreibung doppelt in der Liste. Ein fehlge-
+        # schlagener Scan darf erneut hinzugefügt werden → neuer Versuch.
+        retry = {p.lower(): p for p in self._scan_failed if p in self.plans}
+        known = {p.lower() for p in self.plans} - set(retry)
         added: list[str] = []
         for raw in paths:
             if not raw.lower().endswith(".mkv"):
@@ -591,11 +675,28 @@ class MainWindow(ttk.Frame):
                 path = str(Path(raw))
             if path.lower() in known:
                 continue
+            path = retry.get(path.lower(), path)
+            if raw != path and raw in self._pending_restore:
+                # Sitzungs-Job unter dem kanonischen Pfad führen
+                self._pending_restore[path] = self._pending_restore.pop(raw)
             known.add(path.lower())
             added.append(path)
         if not added:
             return
+        retried = 0
         for path in added:
+            if path in self._scan_failed:
+                self._scan_failed.discard(path)
+                retried += 1
+                self.file_list.update_file(
+                    path, plan_text="wird analysiert …",
+                    status="wird gescannt", tag="dim")
+            else:
+                # Job der letzten Sitzung, dessen Laufwerk wieder da ist:
+                # seine gespeicherte Konfiguration kommt mit
+                job = session.pop_job(self._deferred_jobs, path)
+                if job is not None:
+                    self._pending_restore.setdefault(path, job)
             self.plans[path] = None
             if not self.file_list.contains(path):
                 self.file_list.add_file(path)
@@ -603,36 +704,52 @@ class MainWindow(ttk.Frame):
                              daemon=True).start()
         self._sync_state()
         self._refresh_all()
-        self.log.log(f"{n_text(len(added), 'Datei', 'Dateien')} hinzugefügt.",
-                     "info")
+        if len(added) > retried:
+            self.log.log(f"{n_text(len(added) - retried, 'Datei', 'Dateien')}"
+                         f" hinzugefügt.", "info")
+        if retried:
+            self.log.log(f"{n_text(retried, 'Datei wird', 'Dateien werden')}"
+                         f" erneut analysiert.", "info")
         self._safe_save()
+
+    def _rescan_failed(self) -> None:
+        """Fehlgeschlagene Scans erneut versuchen (z. B. sobald mkvmerge
+        eingerichtet ist) — die Zeile hing sonst bis zum Neustart fest."""
+        paths = [p for p in self._scan_failed
+                 if p in self.plans and self.plans[p] is None]
+        if paths:
+            self.add_files(paths)
 
     def _scan_worker(self, path: str) -> None:
         # Auf die (asynchrone) Tool-Erkennung warten — sonst scheitert ein
         # Scan, der zu früh startet (Sitzungs-Wiederherstellung oder ein
         # Drag&Drop direkt nach dem Start), an fehlendem mkvmerge.
         self._tools_ready.wait(timeout=20)
-        with self._scan_sem:
-            mkvmerge = self.tools.get("mkvmerge", "")
-            try:
-                media = scan_file(mkvmerge or "mkvmerge", path)
-            except ScanError as exc:
-                self.ui_q.put(("SCAN_FAILED", path, str(exc)))
-                return
-            dv_info = None
-            ffprobe = self.tools.get("ffprobe", "")
-            if ffprobe and media.by_type("video"):
+        try:
+            with self._scan_sem:
+                mkvmerge = self.tools.get("mkvmerge", "")
                 try:
-                    dv_info = dv_analysis.analyze(ffprobe, path)
-                except dv_analysis.DVError:
-                    dv_info = None   # DV-Analyse ist optional, nie blockierend
-            # TMDb-Titelabgleich (optional) — läuft schon im Scan-Thread
-            canonical = ""
-            from core import tmdb
-            key = tmdb.resolved_key(self.cfg.tmdb_key)
-            if self.cfg.online_names and key:
-                canonical = tmdb.canonical_name(key, Path(path).name) or ""
-            self.ui_q.put(("SCANNED", path, media, dv_info, canonical))
+                    media = scan_file(mkvmerge or "mkvmerge", path)
+                except ScanError as exc:
+                    self.ui_q.put(("SCAN_FAILED", path, str(exc)))
+                    return
+                dv_info = None
+                ffprobe = self.tools.get("ffprobe", "")
+                if ffprobe and media.by_type("video"):
+                    try:
+                        dv_info = dv_analysis.analyze(ffprobe, path)
+                    except dv_analysis.DVError:
+                        dv_info = None   # DV-Analyse ist optional
+                self.ui_q.put(("SCANNED", path, media, dv_info))
+        except Exception as exc:   # noqa: BLE001 — Zeile darf nie hängen
+            self.ui_q.put(("SCAN_FAILED", path,
+                           f"Analyse fehlgeschlagen: {exc}"))
+            return
+        # TMDb-Titelabgleich (optional) erst NACH dem Scan und außerhalb der
+        # Scan-Plätze: ein langsames Netz hält keine Analyse mehr auf
+        from core import tmdb
+        if self.cfg.online_names and tmdb.resolved_key(self.cfg.tmdb_key):
+            self._title_worker(path)
 
     def _bind_shortcuts(self) -> None:
         """Tastenkürzel wie bei Profi-Werkzeugen. Global auf dem Fenster:
@@ -671,6 +788,7 @@ class MainWindow(ttk.Frame):
             return
         for path in self.file_list.remove_selected():
             self.plans.pop(path, None)
+            self._forget_job(path)
             if self.selected == path:
                 self.selected = None
         if self.selected is None and self.plans:
@@ -685,11 +803,22 @@ class MainWindow(ttk.Frame):
         if self._running:
             return
         self.plans.clear()
+        self._pending_restore.clear()
+        self._scan_failed.clear()
+        # „Leeren“ leert die ganze Warteschlange — auch zurückgestellte Jobs
+        # von nicht verbundenen Laufwerken (sonst blieben sie unsichtbar ewig)
+        self._deferred_jobs.clear()
         self.selected = None
         self.file_list.clear()
         self._sync_state()
         self._refresh_all()
         self._safe_save()
+
+    def _forget_job(self, path: str) -> None:
+        """Entfernte Datei: keine alte Sitzungs-Konfiguration mehr anwenden,
+        falls sie später erneut hinzugefügt wird."""
+        self._pending_restore.pop(path, None)
+        self._scan_failed.discard(path)
 
     def _on_file_selected(self, path: str) -> None:
         self.selected = path
@@ -865,17 +994,31 @@ class MainWindow(ttk.Frame):
         if plan.output_manual:
             return
         from core.naming import clean_filename
-        base = Path(self.profile.output.output_path_for(plan.media.path))
+        output = self._plan_profile(plan).output
+        base = Path(output.output_path_for(plan.media.path))
         stem = base.stem
         if self.cfg.clean_names or plan.canonical_name:
             # TMDb-Titel bevorzugen, sonst Offline-Bereinigung. Kein
             # „_remux“-Suffix — der bereinigte Name unterscheidet sich
-            # ohnehin vom Original, das Suffix wäre nur unschön.
+            # meist vom Original, das Suffix wäre nur unschön.
             if plan.canonical_name:
                 stem = plan.canonical_name
             else:
                 stem = Path(clean_filename(Path(plan.media.path).name)).stem
-        plan.output_path = str(base.with_name(stem + base.suffix))
+        # Schon sauberer Name im Quellordner: dann doch mit Suffix — nie
+        # die Quelle selbst als Ausgabe (der Job würde sonst immer scheitern)
+        plan.output_path = session.distinct_output(
+            str(base.with_name(stem + base.suffix)), plan.media.path,
+            output.suffix)
+
+    def _plan_profile(self, plan: FilePlan) -> RuleProfile:
+        """Das Profil, nach dem `plan` gebaut ist — auch für nicht markierte
+        Dateien (fester Ausgabeordner ist App-Zustand)."""
+        if not plan.profile_name or plan.profile_name == self.profile.name:
+            return self.profile
+        profile = self.cfg.profile(plan.profile_name)
+        profile.output.directory = self.output_dir
+        return profile
 
     def _on_plan_edited(self) -> None:
         plan = self._selected_plan()
@@ -1040,6 +1183,10 @@ class MainWindow(ttk.Frame):
         name = tmdb.canonical_name(key, Path(path).name) or ""
         if name:
             self.ui_q.put(("CANONICAL", path, name))
+        # Hinweise der TMDb-Abfrage (z. B. abgelehnter Key) — je einmal
+        take_notice = getattr(tmdb, "take_notice", lambda: None)
+        while notice := take_notice():
+            self.ui_q.put(("LOG", f"⚠ {notice}", "warn"))
 
     def _choose_output_dir(self) -> None:
         folder = filedialog.askdirectory(title="Ausgabeordner wählen")
@@ -1081,53 +1228,71 @@ class MainWindow(ttk.Frame):
     # ══ Sitzung speichern / wiederherstellen ═════════════════════════════
 
     def _save_session(self) -> None:
-        """Offene (nicht erledigte) Jobs für den nächsten Start merken."""
-        from core import session
-        self.cfg.session = [
-            session.serialize_plan(p) for p in self.plans.values()
-            if p is not None and p.status is not FileStatus.DONE]
+        """Offene (nicht erledigte) Jobs für den nächsten Start merken —
+        auch noch nicht gescannte, fehlgeschlagene und zurückgestellte."""
+        self.cfg.session = session.session_jobs(
+            self.plans, self._pending_restore, self._deferred_jobs)
 
     def _safe_save(self) -> None:
         self.cfg.log_expanded = self.log.expanded
         self._save_session()
         try:
             appconfig.save(self.cfg)
-        except OSError:
-            pass
+        except OSError as exc:
+            # z. B. EXE in einem schreibgeschützten Ordner („Programme“):
+            # einmal deutlich sagen statt jede Änderung still zu verlieren
+            if not self._save_warned:
+                self._save_warned = True
+                folder = appconfig.CONFIG_FILE.parent
+                self._warn(
+                    f"⚠ Einstellungen und Warteschlange lassen sich nicht in "
+                    f"„{folder}“ speichern ({exc.strerror or exc}) — sie "
+                    f"gehen beim Beenden verloren. Spurwerk bitte in einen "
+                    f"beschreibbaren Ordner legen (nicht unter „Programme“).")
 
     def _restore_session(self) -> None:
         """Beim Start die zuletzt offenen Jobs wieder laden."""
         saved = list(self.cfg.session)
         if not saved:
             return
+        reachable, self._deferred_jobs = session.split_reachable(saved)
+        if self._deferred_jobs:
+            n = len(self._deferred_jobs)
+            self.log.log(
+                f"{n_text(n, 'Job', 'Jobs')} der letzten Sitzung nicht "
+                f"gefunden (Laufwerk nicht verbunden?) — "
+                f"{'bleibt' if n == 1 else 'bleiben'} gespeichert; "
+                f"„Leeren“ verwirft {'ihn' if n == 1 else 'sie'}.", "warn")
+            # im Leerzustand (alle Jobs unerreichbar) sähe man das Protokoll
+            # nicht — dort zeigt _sync_state den Hinweis samt „Verwerfen“
+            self._sync_state()
         paths = []
-        for job in saved:
-            path = job.get("path", "")
-            if path and Path(path).exists():
-                self._pending_restore[path] = job
-                paths.append(path)
+        for job in reachable:
+            self._pending_restore[job["path"]] = job
+            paths.append(job["path"])
         if paths:
             self.log.log(f"{n_text(len(paths), 'Job', 'Jobs')} aus der "
                          f"letzten Sitzung wiederhergestellt.", "info")
             self.add_files(paths)
 
-    def _apply_restore(self, plan: FilePlan, job: dict) -> None:
-        """Gespeicherte Konfiguration auf einen frisch gescannten Plan legen."""
-        from core import session
-        session.restore_plan(plan, job)
-        if job.get("output_manual"):
-            plan.output_manual = True
-            plan.output_path = job.get("output_path", plan.output_path)
-        else:
-            self._refresh_output_name(plan)
-
     # ══ Start / Abbruch ══════════════════════════════════════════════════
 
     def _start(self) -> None:
         import copy
-        import os
-        plans = [p for p in self.plans.values() if p is not None]
-        if not plans or self._running:
+        if self._running:
+            return
+        # Offene Panel-Eingabe übernehmen: F5 im Feld „Spurname“ löst kein
+        # <FocusOut> aus — sonst liefe der Start mit dem alten Namen
+        selected = self._selected_plan()
+        if selected is not None and selected.stereo is self.stereo:
+            self._on_stereo_changed()
+        # Fertige Dateien des letzten Laufs jetzt aufräumen statt verzögert —
+        # ein Start im 1,5-s-Fenster darf sie nicht noch einmal verarbeiten
+        if self._done_removal is not None:
+            self.after_cancel(self._done_removal)
+            self._remove_done_files()
+        plans = session.runnable_plans(self.plans.values())
+        if not plans:
             return
         needs_ffmpeg = any(p.stereo_sources() for p in plans)
         missing = [n for n in ("mkvmerge",)
@@ -1147,21 +1312,28 @@ class MainWindow(ttk.Frame):
         for p in plans:
             JobRunner.normalize_output_extension(p)
 
-        # Ausgabe-Kollisionen (gleicher Dateiname aus verschiedenen Ordnern
-        # bei festem Ausgabeordner) vor dem Start abfangen
-        seen: dict[str, str] = {}
-        for p in plans:
-            key = os.path.normcase(os.path.abspath(p.output_path))
-            if key in seen:
-                Messagebox.show_error(
-                    f"Zwei Dateien hätten dieselbe Ausgabedatei:\n"
-                    f"{Path(seen[key]).name}  und  {Path(p.media.path).name}\n"
-                    f"→ {Path(p.output_path).name}\n\n"
-                    f"Bitte Ausgabename oder -ordner anpassen "
-                    f"(Rechtsklick auf die Datei).", "Ausgabe-Kollision",
-                    parent=self)
-                return
-            seen[key] = p.media.path
+        # Ausgabe-Kollisionen vor dem Start abfangen: gleicher Dateiname aus
+        # verschiedenen Ordnern (fester Ausgabeordner) — und eine Ausgabe,
+        # die die QUELLDATEI eines anderen Jobs der Liste überschriebe
+        conflict = session.output_conflict(plans, self.plans)
+        if conflict is not None:
+            p, other, is_source = conflict
+            if is_source:
+                text = (f"Die Ausgabe von „{Path(p.media.path).name}“ wäre "
+                        f"die Quelldatei eines anderen Jobs der Liste:\n"
+                        f"→ {p.output_path}\n\n"
+                        f"Das Original „{Path(other).name}“ würde dabei "
+                        f"überschrieben.")
+            else:
+                text = (f"Zwei Dateien hätten dieselbe Ausgabedatei:\n"
+                        f"„{Path(other).name}“  und  "
+                        f"„{Path(p.media.path).name}“\n"
+                        f"→ {p.output_path}")
+            Messagebox.show_error(
+                f"{text}\n\nBitte Ausgabename oder -ordner anpassen "
+                f"(Rechtsklick auf die Datei).", "Ausgabe-Kollision",
+                parent=self)
+            return
 
         existing = [p for p in plans if Path(p.output_path).exists()]
         if existing:
@@ -1246,18 +1418,25 @@ class MainWindow(ttk.Frame):
             path, media = msg[1], msg[2]
             if path not in self.plans:
                 return   # Datei wurde während des Scans entfernt
-            plan = build_plan(media, self.profile)
-            # neue Dateien erben die gerade sichtbare Konfiguration
-            plan.stereo = replace(self.stereo)
-            plan.profile_name = self.profile.name
-            plan.dv = msg[3] if len(msg) > 3 else None
-            plan.canonical_name = msg[4] if len(msg) > 4 else ""
+            self._scan_failed.discard(path)
             job = self._pending_restore.pop(path, None)
             if job is not None:
-                self.profile = self.cfg.profile(
+                # Wiederhergestellter Job: Regeln SEINES Profils, nicht des
+                # gerade aktiven — self.profile bleibt dabei unangetastet
+                profile = self.cfg.profile(
                     job.get("profile_name") or self.profile.name)
-                self.profile.output.directory = self.output_dir
-                self._apply_restore(plan, job)
+                profile.output.directory = self.output_dir
+                plan = session.restore_job_plan(media, job, profile)
+                if job.get("output_manual"):
+                    plan.output_manual = True
+                    plan.output_path = job.get("output_path",
+                                               plan.output_path)
+            else:
+                plan = build_plan(media, self.profile)
+                # neue Dateien erben die gerade sichtbare Konfiguration
+                plan.stereo = replace(self.stereo)
+                plan.profile_name = self.profile.name
+            plan.dv = msg[3] if len(msg) > 3 else None
             if plan.dv is not None and plan.dv.dv_profile == 7:
                 plan.warnings.append(
                     "Dolby Vision Profil 7 erkannt — viele Geräte zeigen "
@@ -1271,29 +1450,56 @@ class MainWindow(ttk.Frame):
             if self.selected is None:
                 self.selected = path
                 self.file_list.select(path)
-            self._refresh_all()
+            if self.selected == path:
+                # Panel + Profil an DIESE Datei binden — auch wenn sie schon
+                # während des Scans markiert wurde (sonst landeten Panel-
+                # Änderungen im Plan der zuvor markierten Datei)
+                self._on_file_selected(path)
+            else:
+                self._refresh_all()
             self._autosize()
         elif kind == "CANONICAL":
             path, name = msg[1], msg[2]
             plan = self.plans.get(path)
-            if plan is not None:
-                plan.canonical_name = name
-                self._refresh_output_name(plan)
-                self._update_file_row(path, plan)
-                if self.selected == path:
-                    self._update_preview()
-                self._safe_save()
+            # ein wiederhergestellter Titel hat Vorrang (wie bisher); eine
+            # fertige Datei ist unter ihrem Namen geschrieben und geht gleich
+            if (plan is None or plan.canonical_name
+                    or plan.status is FileStatus.DONE):
+                return
+            if self._running and plan.status in (FileStatus.WAITING,
+                                                 FileStatus.RUNNING):
+                # Datei steckt im Lauf, der schreibt den bisherigen Namen —
+                # Titel erst danach übernehmen (sonst zeigte die Liste einen
+                # Namen, den es nie gibt; Plan-Änderungen sind jetzt gesperrt)
+                self._late_titles[path] = name
+                return
+            plan.canonical_name = name
+            self._refresh_output_name(plan)
+            self._update_file_row(path, plan)
+            if self.selected == path:
+                self._update_preview()
+            self._safe_save()
         elif kind == "SCAN_FAILED":
             path, error = msg[1], msg[2]
             if path not in self.plans:
                 return   # Datei wurde während des Scans entfernt
+            # bleibt samt Sitzungs-Konfiguration in der Liste und der
+            # gespeicherten Sitzung; erneut hinzufügen = neuer Versuch
+            self._scan_failed.add(path)
             self.file_list.update_file(path, plan_text=error,
                                        status="Scan-Fehler", tag="error")
             self.log.log(f"{Path(path).name}: {error}", "error")
         elif kind == "TOOLS":
+            before = self.tool_status.get("mkvmerge")
             self.tool_status = msg[1]
             self._tools_ready.set()   # wartende Scans dürfen loslegen
             self._update_tool_chips()
+            mkvmerge = self.tool_status.get("mkvmerge")
+            # nur bei frisch eingerichtetem/geändertem mkvmerge — sonst
+            # wiederholte jedes Schließen der Werkzeuge die Fehler wirklich
+            # kaputter Dateien (erneut hinzufügen bleibt der Weg dafür)
+            if mkvmerge is not None and mkvmerge.ok and mkvmerge != before:
+                self._rescan_failed()
         elif kind == "UPDATE":
             self._show_update(msg[1])
         elif kind == "TOOL_LATEST":
@@ -1303,6 +1509,11 @@ class MainWindow(ttk.Frame):
 
     def _on_batch_done(self, success: int, total: int, cancelled: bool) -> None:
         self._set_running(False)
+        # im Lauf eingetroffene TMDb-Titel jetzt übernehmen — fertige
+        # Dateien behalten ihren geschriebenen Namen (siehe „CANONICAL“)
+        late, self._late_titles = self._late_titles, {}
+        for path, name in late.items():
+            self._handle_message(("CANONICAL", path, name))
         self.status_label.configure(text="")
         self._update_start_button()
         if cancelled:
@@ -1325,12 +1536,13 @@ class MainWindow(ttk.Frame):
         if success:
             # erledigte Dateien verlassen die Warteschlange (kurz verzögert,
             # damit der grüne „fertig“-Status sichtbar bleibt)
-            self.after(1500, self._remove_done_files)
+            self._done_removal = self.after(1500, self._remove_done_files)
 
     def _remove_done_files(self) -> None:
         """Job-Queue-Verhalten: erfolgreich verarbeitete Dateien fliegen aus
         der Liste — Fehler und Übersprungenes bleiben sichtbar stehen.
         Die QUELLDATEIEN werden selbstverständlich nicht angetastet."""
+        self._done_removal = None
         done = [path for path, plan in self.plans.items()
                 if plan and plan.status is FileStatus.DONE]
         if not done:
