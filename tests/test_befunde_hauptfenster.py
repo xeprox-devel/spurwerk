@@ -129,30 +129,23 @@ def test_sitzung_behaelt_ungescannte_und_fehlgeschlagene_jobs():
     assert jobs[2] == {"path": "C:/f/neu.mkv"}
 
 
-def test_unerreichbare_jobs_werden_zurueckgestellt():
+def test_wiederherstellbare_jobs_ohne_pfad_fallen_weg():
+    # Ob die Quelle erreichbar ist, entscheidet erst die Hintergrund-
+    # Prüfung — hier fällt nur Unbrauchbares weg, die Reihenfolge bleibt
     jobs = [{"path": "C:/da.mkv"}, {"path": "E:/usb/weg.mkv", "x": 1},
-            {"path": ""}, {}, "kaputt"]
-    reachable, deferred = session.split_reachable(
-        jobs, exists=lambda p: p == "C:/da.mkv")
-    assert reachable == [{"path": "C:/da.mkv"}]
-    assert deferred == [{"path": "E:/usb/weg.mkv", "x": 1}]
-
-
-def test_zurueckgestellte_jobs_bleiben_gespeichert_ohne_doppel():
-    deferred = [{"path": "E:/usb/a.mkv"}, {"path": "E:/usb/b.mkv"}]
-    jobs = session.session_jobs({"E:/usb/b.mkv": None}, {}, deferred)
-    assert [j["path"] for j in jobs] == ["E:/usb/b.mkv", "E:/usb/a.mkv"]
+            {"path": ""}, {}, "kaputt", {"path": 7}]
+    assert [job for _p, job in session.restorable_jobs(jobs)] == [
+        {"path": "C:/da.mkv"}, {"path": "E:/usb/weg.mkv", "x": 1}]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-Pfade")
-def test_zurueckgestellter_job_wird_unabhaengig_von_schreibweise_gefunden():
-    deferred = [{"path": "E:/USB/Film.mkv", "profile_name": "P"}]
-    assert session.session_jobs({"e:\\usb\\film.mkv": None}, {},
-                                deferred) == [{"path": "e:\\usb\\film.mkv"}]
-    assert session.pop_job(deferred, "e:\\usb\\film.mkv") == {
-        "path": "E:/USB/Film.mkv", "profile_name": "P"}
-    assert deferred == []
-    assert session.pop_job(deferred, "e:\\usb\\film.mkv") is None
+def test_wiederherstellbare_jobs_einmal_unabhaengig_von_schreibweise():
+    first = {"path": "E:/USB/Film.mkv", "profile_name": "P"}
+    jobs = [first, {"path": "e:\\usb\\film.mkv"}, {"path": "C:/x/a.mkv"}]
+    # der Pfad wird nur als Text normalisiert (kein Dateizugriff), der
+    # gespeicherte Job bleibt unverändert
+    assert session.restorable_jobs(jobs, listed=["c:\\X\\A.mkv"]) == [
+        ("E:\\USB\\Film.mkv", first)]
 
 
 # ══ 6 · Start verarbeitet keine erledigten Dateien ═══════════════════════
@@ -262,6 +255,23 @@ def _log_text(win) -> str:
     return win.log.text.get("1.0", "end")
 
 
+def _test_drive_root(base: Path, real):
+    """Laufwerke unter tmp_path simulieren: Jeder Ordner direkt darunter
+    gilt als eigenes Laufwerk — tmp_path/"E_weg"/"film.mkv" liegt auf einem
+    nicht verbundenen, bis der Ordner angelegt wird. Dateien direkt unter
+    tmp_path liegen auf einem verbundenen; alles andere wie echt."""
+    bases = [base, base.resolve()]
+
+    def drive_root(path: str) -> str:
+        full = Path(os.path.abspath(path))
+        for b in bases:
+            if full.is_relative_to(b):
+                parts = full.relative_to(b).parts
+                return str(b / parts[0]) if len(parts) > 1 else str(b)
+        return real(path)
+    return drive_root
+
+
 @pytest.fixture(scope="module")
 def tk_root():
     ttk = pytest.importorskip("ttkbootstrap")
@@ -278,6 +288,10 @@ def tk_root():
     yield root
     _cancel_afters(root)
     root.destroy()
+    # ttkbootstrap hält seinen Style als Singleton am ersten Fenster — ohne
+    # Zurücksetzen scheiterte das Fenster der nächsten Testdatei
+    from ttkbootstrap.style import Style
+    Style.instance = None
 
 
 @pytest.fixture
@@ -290,6 +304,9 @@ def make_win(tk_root, tmp_path, monkeypatch):
     monkeypatch.setattr(appconfig, "CONFIG_FILE", tmp_path / "config.json")
     monkeypatch.setattr(appconfig, "LEGACY_INI", tmp_path / "config.ini")
     monkeypatch.setattr(appconfig, "base_path", lambda: tmp_path)
+    # „Laufwerke“ sind Ordner unter tmp_path — nie echte Laufwerksbuchstaben
+    monkeypatch.setattr(session, "drive_root",
+                        _test_drive_root(tmp_path, session.drive_root))
 
     real_scan_worker = mw.MainWindow._scan_worker
     started: list[str] = []
@@ -299,6 +316,7 @@ def make_win(tk_root, tmp_path, monkeypatch):
 
     class FakeMessagebox:
         calls: list = []
+        answer = "Ja"                    # Antwort auf yesno (Test stellt um)
 
         @classmethod
         def show_error(cls, message, title=None, **_kw):
@@ -307,7 +325,7 @@ def make_win(tk_root, tmp_path, monkeypatch):
         @classmethod
         def yesno(cls, message, title=None, **_kw):
             cls.calls.append(("yesno", title, message))
-            return "Ja"
+            return cls.answer
 
     class FakeToast:
         def __init__(self, **_kw):
@@ -335,6 +353,7 @@ def make_win(tk_root, tmp_path, monkeypatch):
         win.scans = started
         win.real_scan_worker = lambda path: real_scan_worker(win, path)
         win.messages = FakeMessagebox.calls
+        win.messagebox = FakeMessagebox
         win.runs = CapturingRunner.runs
         windows.append(win)
         return win
@@ -371,6 +390,25 @@ def _saved_session(tmp_path: Path) -> list[dict]:
     return json.loads((tmp_path / "config.json").read_text("utf-8"))["session"]
 
 
+def _pump_sources(win, timeout: float = 3.0) -> None:
+    """Die laufende Quellen-Prüfung abschließen: Worker-Meldungen wie
+    _poll_queue abarbeiten, bis „SOURCE_DONE“ verarbeitet ist."""
+    end = time.monotonic() + timeout
+    while win._watch.checking:
+        assert time.monotonic() < end, "Zeitüberschreitung"
+        try:
+            win._handle_message(win.ui_q.get(timeout=0.02))
+        except queue.Empty:
+            pass
+
+
+def _restore(win) -> None:
+    """Sitzung wiederherstellen wie beim Start — samt Hintergrund-Prüfung
+    der Quellen (erreichbare werden danach gescannt)."""
+    win._restore_session()
+    _pump_sources(win)
+
+
 # 1 ─────────────────────────────────────────────────────────────────────────
 
 
@@ -381,7 +419,7 @@ def test_ui_wiederherstellung_baut_mit_dem_job_profil(win, tmp_path):
     job = session.serialize_plan(build_plan(film_at(path), builtin(REMUX)))
     win.cfg.active_profile = DE                    # inzwischen aktiv
     win.cfg.session = [job]
-    win._restore_session()
+    _restore(win)
     _scanned(win, path)
     plan = win.plans[path]
     assert plan.profile_name == REMUX
@@ -399,7 +437,7 @@ def test_ui_wiederherstellung_aendert_profil_der_markierung_nicht(win,
     win.cfg.session = [
         session.serialize_plan(build_plan(film_at(pa), builtin(DE))),
         session.serialize_plan(build_plan(film_at(pb), builtin(REMUX)))]
-    win._restore_session()
+    _restore(win)
     _scanned(win, pa)                               # a wird markiert
     _scanned(win, pb)                               # b nicht markiert
     assert win.selected == pa
@@ -423,7 +461,7 @@ def test_ui_fehlgeschlagener_scan_bleibt_und_laesst_sich_wiederholen(
     path = str(src.resolve())
     job = {"path": path, "profile_name": REMUX, "overrides": {"1": "drop"}}
     win.cfg.session = [job]
-    win._restore_session()
+    _restore(win)
     _wait_for(lambda: win.scans == [path])
     win._handle_message(("SCAN_FAILED", path, "mkvmerge nicht gefunden"))
     win._safe_save()
@@ -472,15 +510,18 @@ def test_ui_unveraendertes_mkvmerge_scannt_kaputte_datei_nicht_neu(
 
 
 def test_ui_unerreichbare_jobs_bleiben_gespeichert(win, tmp_path):
+    # (Ausführlich: tests/test_offline_jobs.py)
     missing = tmp_path / "usb" / "weg.mkv"
     present = tmp_path / "da.mkv"
     present.write_bytes(b"")
     gone_job = {"path": str(missing), "profile_name": REMUX}
     win.cfg.session = [gone_job, {"path": str(present.resolve())}]
-    win._restore_session()
-    assert "1 Job der letzten Sitzung nicht gefunden" in _log_text(win)
+    _restore(win)
+    assert "1 Datei der letzten Sitzung wartet auf ihr Laufwerk" \
+        in _log_text(win)
+    assert win.file_list.tree.set(str(missing), "status") == "Laufwerk fehlt"
     win._safe_save()
-    assert gone_job in _saved_session(tmp_path)
+    assert _saved_session(tmp_path)[0] == gone_job
 
     # Laufwerk wieder da: Hinzufügen bringt die gespeicherte Konfiguration mit
     missing.parent.mkdir()
@@ -492,10 +533,14 @@ def test_ui_unerreichbare_jobs_bleiben_gespeichert(win, tmp_path):
     assert len(paths) == len(set(paths)) == 2
 
 
-def test_ui_leeren_verwirft_auch_zurueckgestellte_jobs(win, tmp_path):
+def test_ui_leeren_verwirft_wartende_jobs_nach_rueckfrage(win, tmp_path):
+    # Laufwerk (tmp_path) da, Datei nicht: fragt ebenso
     win.cfg.session = [{"path": str(tmp_path / "weg.mkv")}]
-    win._restore_session()
-    win._clear_files()
+    _restore(win)
+    assert win.file_list.tree.set(str(tmp_path / "weg.mkv"), "status") \
+        == "Datei fehlt"
+    win._clear_files()                             # Rückfrage: „Ja“
+    assert [m[:2] for m in win.messages] == [("yesno", "Liste leeren")]
     assert _saved_session(tmp_path) == []
 
 
@@ -503,35 +548,31 @@ def _shown(widget) -> bool:
     return widget.winfo_manager() != ""
 
 
-def test_ui_alle_jobs_unerreichbar_hinweis_im_leerzustand(win, tmp_path):
-    # Typischer USB-Fall: ALLE Jobs fehlen → Leerzustand, Protokoll und
-    # „Leeren“ (Arbeitsansicht) sind unsichtbar — der Hinweis nicht
-    win.cfg.session = [{"path": str(tmp_path / "usb" / "a.mkv")},
-                       {"path": str(tmp_path / "usb" / "b.mkv")}]
-    win._restore_session()
-    assert not _shown(win.work) and _shown(win.empty)
-    assert _shown(win.empty_notice) and _shown(win.discard_deferred_btn)
-    text = win.empty_notice_label.cget("text")
-    assert "2 Jobs der letzten Sitzung nicht gefunden" in text
-    assert "Leeren" not in text                    # hier nicht erreichbar
-    win.discard_deferred_btn.invoke()
-    assert win._deferred_jobs == [] and _saved_session(tmp_path) == []
+def test_ui_alle_jobs_unerreichbar_stehen_sichtbar_in_der_liste(win,
+                                                                tmp_path):
+    # Typischer USB-Fall: ALLE Jobs fehlen → trotzdem Arbeitsansicht mit
+    # den wartenden Zeilen (Protokoll und „Leeren“ erreichbar) — kein
+    # Leerzustand mit Sonderhinweis mehr
+    paths = [str(tmp_path / "usb" / "a.mkv"), str(tmp_path / "usb" / "b.mkv")]
+    win.cfg.session = [{"path": p} for p in paths]
+    _restore(win)
+    assert _shown(win.work) and not _shown(win.empty)
+    assert win.file_list.paths() == paths
     assert not _shown(win.empty_notice)
-    assert "2 gespeicherte Jobs der letzten Sitzung verworfen" \
-        in _log_text(win)
+    assert not hasattr(win, "discard_deferred_btn")
+    assert win.files_label.cget("text") == "DATEIEN (2)"
 
 
-def test_ui_hinweis_zurueckgestellter_jobs_auch_nach_entfernen(win,
+def test_ui_wartende_zeile_bleibt_nach_entfernen_einer_anderen(win,
                                                                tmp_path):
-    win.cfg.session = [{"path": str(tmp_path / "usb" / "weg.mkv")}]
-    win._restore_session()
-    (path,) = _add(win, tmp_path / "anderer.mkv")  # Arbeitsansicht
+    gone = str(tmp_path / "usb" / "weg.mkv")
+    win.cfg.session = [{"path": gone}]
+    _restore(win)
+    (path,) = _add(win, tmp_path / "anderer.mkv")
     win.file_list.select(path)
-    win._remove_selected()                         # wieder leer
-    assert _shown(win.empty_notice)
-    assert "1 Job der letzten Sitzung" in win.empty_notice_label.cget("text")
-    assert win.discard_deferred_btn.cget("text") \
-        == "Gespeicherten Job verwerfen"
+    win._remove_selected()
+    assert win.file_list.paths() == [gone] and _shown(win.work)
+    assert list(win.plans) == [gone]
 
 
 # 4 ─────────────────────────────────────────────────────────────────────────
@@ -672,8 +713,7 @@ def test_ui_config_hinweis_im_leerzustand_sichtbar(make_win, tmp_path):
     # Protokoll ist dort unsichtbar, der Hinweis muss trotzdem ankommen
     win = make_win(load_notice="config.json war beschädigt.")
     assert _shown(win.empty_notice)
-    assert "config.json war beschädigt" in win.empty_notice_label.cget("text")
-    assert not _shown(win.discard_deferred_btn)
+    assert "config.json war beschädigt" in win.empty_notice.cget("text")
     (path,) = _add(win, tmp_path / "a.mkv")        # ab jetzt: Protokoll
     win.file_list.select(path)
     win._remove_selected()
@@ -742,7 +782,7 @@ def test_ui_speicherfehler_wird_einmal_gemeldet(win, tmp_path, monkeypatch):
     # im Leerzustand (z. B. gleich nach „Leeren“) ist das Protokoll
     # unsichtbar — die Warnung steht dann unter der Ablage
     assert not win.plans and _shown(win.empty_notice)
-    assert "lassen sich nicht in" in win.empty_notice_label.cget("text")
+    assert "lassen sich nicht in" in win.empty_notice.cget("text")
 
 
 # 12 ────────────────────────────────────────────────────────────────────────

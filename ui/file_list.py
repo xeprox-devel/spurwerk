@@ -66,10 +66,11 @@ class FileList(ttk.Frame):
     def contains(self, path: str) -> bool:
         return self.tree.exists(path)
 
-    def add_file(self, path: str) -> None:
+    def add_file(self, path: str, *, plan_text: str = "wird analysiert …",
+                 status: str = "wird gescannt", tag: str = "dim") -> None:
         self.tree.insert("", "end", iid=path, text=f" {Path(path).name}",
-                         values=("—", "wird analysiert …", "wird gescannt"),
-                         tags=("dim",))
+                         values=("—", plan_text, status),
+                         tags=(tag,) if tag else ())
 
     def update_file(self, path: str, *, duration: float | None = None,
                     plan_text: str | None = None, status: str | None = None,

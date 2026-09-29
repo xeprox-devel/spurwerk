@@ -1,7 +1,7 @@
-"""Job-Queue-Logik ohne tkinter: Sitzung speichern/wiederherstellen und die
-Prüfungen vor dem Start.
+"""Job-Queue-Logik ohne tkinter: Sitzung speichern/wiederherstellen, Zeilen
+auf nicht verbundenen Laufwerken und die Prüfungen vor dem Start.
 
-Reine Funktionen — die UI ruft sie beim Speichern, Wiederherstellen und
+Reine Logik — die UI ruft sie beim Speichern, Wiederherstellen und
 Starten. Gespeichert wird nur die leichte Konfiguration; die schweren
 MediaInfo-Daten werden beim Neustart per Neu-Scan geholt.
 """
@@ -9,7 +9,7 @@ MediaInfo-Daten werden beim Neustart per Neu-Scan geholt.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, fields
 from pathlib import Path
 
@@ -98,50 +98,187 @@ def _key(path: str) -> str:
 
 
 def session_jobs(plans: Mapping[str, FilePlan | None],
-                 pending: Mapping[str, dict],
-                 deferred: Iterable[dict] = ()) -> list[dict]:
-    """Alle offenen Jobs für config.json:
+                 pending: Mapping[str, dict]) -> list[dict]:
+    """Alle offenen Jobs für config.json, in der Reihenfolge der Liste:
     - gescannte Pläne (außer erledigten) → frisch serialisiert,
-    - noch nicht oder erfolglos gescannte (Plan None) → die gespeicherte
-      Konfiguration unverändert weiter, sonst ginge die Warteschlange
-      schon beim Start (oder durch einen Scan-Fehler) verloren,
-    - zurückgestellte Jobs (Quelle gerade nicht erreichbar) → bleiben, bis
-      das Laufwerk wieder da ist."""
+    - Zeilen ohne Plan (noch nicht oder erfolglos gescannt, Laufwerk nicht
+      verbunden) → die gespeicherte Konfiguration unverändert weiter, sonst
+      ginge die Warteschlange schon beim Start, durch einen Scan-Fehler
+      oder eine abgezogene USB-Platte verloren."""
     jobs: list[dict] = []
     for path, plan in plans.items():
         if plan is None:
             jobs.append(pending.get(path) or {"path": path})
         elif plan.status is not FileStatus.DONE:
             jobs.append(serialize_plan(plan))
-    listed = {_key(path) for path in plans}
-    jobs += [job for job in deferred
-             if _key(str(job.get("path", ""))) not in listed]
     return jobs
 
 
-def split_reachable(jobs: Iterable[dict],
-                    exists: Callable[[str], bool] = os.path.exists,
-                    ) -> tuple[list[dict], list[dict]]:
-    """Gespeicherte Jobs → (erreichbar, zurückgestellt). Zurückgestellt ist
-    ein Job, dessen Quelle gerade fehlt (USB-Platte/NAS nicht verbunden);
-    Einträge ohne Pfad fallen weg."""
-    reachable: list[dict] = []
-    deferred: list[dict] = []
-    for job in jobs:
-        path = job.get("path", "") if isinstance(job, dict) else ""
-        if not path:
+def restorable_jobs(entries: Iterable, listed: Iterable[str] = (),
+                    ) -> list[tuple[str, dict]]:
+    """Gespeicherte Sitzung → (Pfad, Job) in Warteschlangen-Reihenfolge.
+    Einträge ohne Pfad fallen weg, jede Datei kommt einmal (Schreibweise
+    egal), schon gelistete gar nicht. Der Pfad wird nur als Text
+    normalisiert — ein Dateizugriff könnte an einem getrennten
+    Netzlaufwerk hängen."""
+    seen = {_key(path) for path in listed}
+    jobs: list[tuple[str, dict]] = []
+    for job in entries:
+        path = job.get("path") if isinstance(job, dict) else None
+        if not path or not isinstance(path, str):
             continue
-        (reachable if exists(path) else deferred).append(job)
-    return reachable, deferred
+        key = _key(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        jobs.append((os.path.normpath(os.path.abspath(path)), job))
+    return jobs
 
 
-def pop_job(jobs: list[dict], path: str) -> dict | None:
-    """Entnimmt den gespeicherten Job zu `path` (Schreibweise egal)."""
-    key = _key(path)
-    for i, job in enumerate(jobs):
-        if _key(str(job.get("path", ""))) == key:
-            return jobs.pop(i)
-    return None
+# ── Quellen auf nicht verbundenen Laufwerken ──────────────────────────────
+
+
+def source_exists(path: str) -> bool:
+    """Ist die Quelldatei erreichbar? Kann an einem getrennten
+    Netzlaufwerk viele Sekunden hängen — nur im Hintergrund aufrufen."""
+    try:
+        return os.path.exists(path)
+    except (OSError, ValueError):
+        return False
+
+
+def drive_root(path: str) -> str:
+    """Wurzel des Laufwerks bzw. der Netzfreigabe: „E:\\“, „\\\\nas\\filme\\“.
+    Nur Text, kein Dateizugriff."""
+    drive = os.path.splitdrive(os.path.abspath(path))[0]
+    return drive + os.sep if drive else os.sep
+
+
+def by_drive(paths: Iterable[str]) -> list[list[str]]:
+    """Pfade je Laufwerk bzw. Netzfreigabe (Reihenfolge bleibt): So wartet
+    die Prüfung einer USB-Platte nicht auf ein hängendes NAS."""
+    groups: dict[str, list[str]] = {}
+    for path in paths:
+        groups.setdefault(os.path.normcase(drive_root(path)), []).append(path)
+    return list(groups.values())
+
+
+class SourceWatch:
+    """Buchführung für Zeilen der Warteschlange, deren Quelle (noch) nicht
+    erreichbar ist — ohne tkinter. Die UI holt sich, was geprüft wird
+    (begin_check), und erfährt je Befund, was aus der Zeile wird
+    (result). Ihr gespeicherter Job bleibt dabei unangetastet."""
+
+    # Zustände einer Zeile — NO_DRIVE und NO_FILE sind auch die Befunde
+    # einer Prüfung (probe_sources), dazu REACHABLE
+    CHECKING = "prüfen"    # Startprüfung läuft noch
+    NO_DRIVE = "kein Laufwerk"   # Laufwerk/Freigabe nicht verbunden
+    NO_FILE = "keine Datei"      # Laufwerk da, Datei nicht (verschoben?)
+    REACHABLE = "erreichbar"
+
+    # Ergebnisse von result(), außer dem neuen Zustand NO_DRIVE/NO_FILE
+    FOUND = "gefunden"     # Startprüfung: Quelle da → normal einlesen
+    BACK = "wieder da"     # Quelle wieder erreichbar → einlesen
+
+    def __init__(self) -> None:
+        self._state: dict[str, str] = {}
+        self._new: dict[str, str] = {}   # erstmals fehlend (diese Prüfung)
+        self.checking = False            # höchstens eine Prüfung zur Zeit
+
+    def __contains__(self, path: object) -> bool:
+        return path in self._state
+
+    def __iter__(self):
+        return iter(list(self._state))
+
+    def __len__(self) -> int:
+        return len(self._state)
+
+    def watch(self, path: str) -> None:
+        """Neue Zeile aus der Sitzung — Quelle noch ungeprüft."""
+        self._state[path] = self.CHECKING
+
+    def state(self, path: str) -> str | None:
+        return self._state.get(path)
+
+    def waiting(self) -> list[str]:
+        """Geprüfte Zeilen, deren Quelle fehlt — sie prüft der Takt erneut
+        (ohne die noch ungeprüften)."""
+        return [p for p, s in self._state.items() if s != self.CHECKING]
+
+    def counts(self) -> dict[str, int]:
+        """Zeilen je Zustand — nur vorkommende (für Rückfrage/Protokoll)."""
+        counts: dict[str, int] = {}
+        for state in self._state.values():
+            counts[state] = counts.get(state, 0) + 1
+        return counts
+
+    def discard(self, path: str) -> None:
+        self._state.pop(path, None)
+        self._new.pop(path, None)
+
+    def clear(self) -> None:
+        """Alle Zeilen weg — eine laufende Prüfung bleibt vermerkt, ihr
+        Abschluss kommt noch (end_check)."""
+        self._state.clear()
+        self._new.clear()
+
+    def begin_check(self) -> list[str]:
+        """Pfade für die nächste Prüfung. Leer — und dann startet keine —,
+        solange eine läuft oder keine Zeile wartet."""
+        if self.checking or not self._state:
+            return []
+        self.checking = True
+        return list(self._state)
+
+    def end_check(self) -> dict[str, int]:
+        """Prüfung fertig → wie viele Zeilen dabei erstmals als fehlend
+        erkannt wurden, je Zustand (für die Meldung nach dem Start)."""
+        self.checking = False
+        new: dict[str, int] = {}
+        for state in self._new.values():
+            new[state] = new.get(state, 0) + 1
+        self._new.clear()
+        return new
+
+    def result(self, path: str, finding: str) -> str | None:
+        """Befund einer Prüfung → FOUND/BACK (Zeile wird ein normaler Job
+        und verlässt die Buchführung), der neue Zustand NO_DRIVE/NO_FILE
+        (Zeile anpassen) oder None (nichts zu tun: unverändert, inzwischen
+        entfernt oder eingelesen)."""
+        state = self._state.get(path)
+        if state is None or finding == state:
+            return None
+        if finding == self.REACHABLE:
+            del self._state[path]
+            self._new.pop(path, None)
+            return self.FOUND if state == self.CHECKING else self.BACK
+        if state == self.CHECKING:
+            self._new[path] = finding
+        self._state[path] = finding
+        return finding
+
+
+def probe_sources(paths: Iterable[str]) -> Iterator[tuple[str, str]]:
+    """(Pfad, Befund) je Quelle: REACHABLE, NO_DRIVE oder NO_FILE. Kann an
+    einem getrennten Netzlaufwerk hängen — nur im Hintergrund. Fehlt die
+    Datei, klärt die Wurzel ihres Laufwerks, ob das Laufwerk fehlt oder nur
+    die Datei (verschoben/gelöscht); ein fehlendes Laufwerk wird je Prüfung
+    einmal gefragt, nicht für jede seiner Dateien."""
+    drives: dict[str, bool] = {}   # Laufwerk erreichbar?
+    for path in paths:
+        root = drive_root(path)
+        key = os.path.normcase(root)
+        if drives.get(key) is False:
+            yield path, SourceWatch.NO_DRIVE
+        elif source_exists(path):
+            drives[key] = True
+            yield path, SourceWatch.REACHABLE
+        else:
+            if key not in drives:
+                drives[key] = source_exists(root)
+            yield path, (SourceWatch.NO_FILE if drives[key]
+                         else SourceWatch.NO_DRIVE)
 
 
 # ── Vor dem Start ─────────────────────────────────────────────────────────

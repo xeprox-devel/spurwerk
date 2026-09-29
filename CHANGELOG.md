@@ -78,11 +78,19 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   bekam andere Spuren, als ihr Profilname versprach. Eine Ausgabe ohne
   Standard-Audiospur ist ausgeschlossen.
 - **Die Warteschlange bleibt erhalten,** auch wenn Spurwerk vor dem Ende
-  der Analyse beendet wird. Dateien mit Scan-Fehler und Jobs auf einem
-  gerade nicht verbundenen Laufwerk (USB/NAS) bleiben samt Einstellungen
-  gespeichert; Protokoll bzw. Startansicht sagen es an, „Leeren" verwirft
-  sie. Ist mkvmerge neu eingerichtet, werden fehlgeschlagene Dateien
-  automatisch neu analysiert.
+  der Analyse beendet wird; Dateien mit Scan-Fehler bleiben samt
+  Einstellungen gespeichert. Ist mkvmerge neu eingerichtet, werden
+  fehlgeschlagene Dateien automatisch neu analysiert.
+- **Dateien auf einem nicht verbundenen Laufwerk (USB/NAS)** gehen nicht
+  mehr verloren: Sie stehen nach dem Start mit „Laufwerk fehlt" in der
+  Liste und behalten ihre Einstellungen. Ist das Laufwerk wieder da, liest
+  Spurwerk sie von selbst ein — nach wenigen Sekunden, beim Zurückkehren
+  ins Fenster sofort. Ist das Laufwerk da, die Datei aber nicht
+  (verschoben oder gelöscht), steht „Datei fehlt" in der Liste. Der Start
+  überspringt solche Dateien mit Hinweis im Protokoll; „Entfernen" nimmt
+  einzelne heraus, „Leeren" fragt vorher nach — auch, solange die Prüfung
+  noch läuft. Geprüft wird im Hintergrund, ein nicht erreichbares
+  Netzlaufwerk bremst den Start nicht mehr aus.
 - **Keine Ausgabe überschreibt mehr die Quelle eines anderen Jobs**
   (z. B. „Film.mkv" und „Film_remux.mkv" im selben Ordner): Vor dem Start
   nennt eine Meldung beide Dateien, im Lauf wird der Job übersprungen.

@@ -50,6 +50,31 @@ _STATUS_TAGS = {
     FileStatus.RUNNING: "running", FileStatus.SKIPPED: "dim",
 }
 
+# Zeilen der Sitzung, deren Quelle (noch) nicht erreichbar ist
+_W = session.SourceWatch
+_WAITING_ROW = {
+    _W.CHECKING: dict(
+        plan_text="Quelle wird geprüft …", status="wird geprüft", tag="dim"),
+    _W.NO_DRIVE: dict(   # passt in die Plan-Spalte
+        plan_text="wartet auf das Laufwerk · Einstellungen gespeichert",
+        status="Laufwerk fehlt", tag="warn"),
+    _W.NO_FILE: dict(
+        plan_text="Datei nicht gefunden · Einstellungen gespeichert",
+        status="Datei fehlt", tag="warn"),
+}
+# Grund im Protokoll, wenn der Start solche Zeilen überspringt
+_SKIP_REASON = {_W.NO_DRIVE: "Laufwerk nicht verbunden",
+                _W.NO_FILE: "Datei nicht gefunden",
+                _W.CHECKING: "Quelle wird noch geprüft"}
+SOURCE_CHECK_MS = 5000   # Takt der Hintergrund-Prüfung wartender Zeilen
+
+
+def _join(parts: list[str], word: str = "und") -> str:
+    """„a, b und c“ — Aufzählung für Meldungen."""
+    if len(parts) < 2:
+        return "".join(parts)
+    return f"{', '.join(parts[:-1])} {word} {parts[-1]}"
+
 
 def n_text(n: int, singular: str, plural: str) -> str:
     """Echte Pluralform statt Klammer-Plural: n_text(3, "Datei", "Dateien")."""
@@ -89,10 +114,15 @@ class MainWindow(ttk.Frame):
         self._running = False
         self._lock_buttons: list = []   # während des Laufs gesperrt
         self._lock_combos: list = []
+        # Profil-Knöpfe („Bearbeiten …“, „Auf alle Dateien“): zusätzlich
+        # gesperrt, solange eine Zeile ohne erreichbare Quelle markiert ist
+        self._profile_buttons: list = []
         self._pending_restore: dict[str, dict] = {}   # Session-Wiederherstellung
-        # Sitzungs-Jobs, deren Quelle beim Start fehlte (USB/NAS) — bleiben
-        # gespeichert, bis das Laufwerk wieder da ist
-        self._deferred_jobs: list[dict] = []
+        # Sitzungs-Zeilen, deren Quelle (noch) nicht erreichbar ist (USB/NAS
+        # nicht verbunden): sichtbar in der Liste, ohne Plan, der Job wartet
+        # in _pending_restore — eine Hintergrund-Prüfung holt sie zurück
+        self._watch = session.SourceWatch()
+        self._watch_after: str | None = None   # after-ID der nächsten Prüfung
         self._scan_failed: set[str] = set()   # erneut analysierbar
         self._save_warned = False             # Speicherfehler nur einmal melden
         self._done_removal: str | None = None  # after-ID des Aufräumens
@@ -233,19 +263,12 @@ class MainWindow(ttk.Frame):
                                     anchor="center", justify="center")
         self.empty_rule.grid(row=2, column=0, pady=(6, 12))
 
-        # Hinweise im Leerzustand (Startwarnungen, zurückgestellte Jobs) —
-        # wird erst gegridet, wenn es etwas zu melden gibt
-        self.empty_notice = ttk.Frame(self.empty)
-        self.empty_notice_label = ttk.Label(
-            self.empty_notice, foreground=theme.COLORS["warning"],
+        # Warnungen im Leerzustand (z. B. beschädigte config.json) — wird
+        # erst gegridet, wenn es etwas zu melden gibt. Jobs auf nicht
+        # verbundenen Laufwerken stehen dagegen sichtbar in der Liste.
+        self.empty_notice = ttk.Label(
+            self.empty, foreground=theme.COLORS["warning"],
             anchor="center", justify="center", wraplength=760)
-        self.empty_notice_label.grid(row=0, column=0)
-        self.discard_deferred_btn = ttk.Button(
-            self.empty_notice, bootstyle="secondary-outline",
-            command=self._discard_deferred)
-        _tip(self.discard_deferred_btn,
-             "Die gespeicherten Jobs aus der Warteschlange nehmen — die "
-             "Quelldateien bleiben unangetastet.")
 
     def _build_workspace(self) -> None:
         self.work = ttk.Frame(self)
@@ -316,6 +339,7 @@ class MainWindow(ttk.Frame):
                                    command=self._apply_to_all)
         apply_all_btn.grid(row=0, column=4, padx=(6, 0))
         self._lock_buttons.append(apply_all_btn)
+        self._profile_buttons += [edit_btn, apply_all_btn]
         _tip(apply_all_btn, "Überträgt das aktuelle Profil samt "
                             "Konvertierungs-Einstellungen auf alle Dateien — "
                             "manuelle Spur-Änderungen bleiben erhalten.")
@@ -506,40 +530,12 @@ class MainWindow(ttk.Frame):
             self._autosize(allow_shrink=True)
 
     def _refresh_empty_notice(self) -> None:
-        """Hinweiszeile(n) im Leerzustand: gesammelte Warnungen und — solange
-        es sie gibt — die zurückgestellten Jobs samt „Verwerfen“ (der
-        „Leeren“-Button der Arbeitsansicht ist hier nicht erreichbar)."""
-        lines = list(self._empty_notices)
-        n = len(self._deferred_jobs)
-        if n:
-            rest = ("er bleibt gespeichert und kommt" if n == 1
-                    else "sie bleiben gespeichert und kommen")
-            lines.append(
-                f"⚠ {n_text(n, 'Job', 'Jobs')} der letzten Sitzung nicht "
-                f"gefunden (Laufwerk nicht verbunden?) — {rest} beim "
-                f"nächsten Start zurück, sobald das Laufwerk wieder da ist.")
-            self.discard_deferred_btn.configure(
-                text=("Gespeicherten Job verwerfen" if n == 1
-                      else "Gespeicherte Jobs verwerfen"))
-            self.discard_deferred_btn.grid(row=1, column=0, pady=(6, 0))
-        else:
-            self.discard_deferred_btn.grid_remove()
-        if lines:
-            self.empty_notice_label.configure(text="\n".join(lines))
+        """Hinweiszeile(n) im Leerzustand: die dort gesammelten Warnungen."""
+        if self._empty_notices:
+            self.empty_notice.configure(text="\n".join(self._empty_notices))
             self.empty_notice.grid(row=3, column=0, pady=(0, 12))
         else:
             self.empty_notice.grid_remove()
-
-    def _discard_deferred(self) -> None:
-        """Zurückgestellte Sitzungs-Jobs verwerfen — nur ihre gespeicherte
-        Konfiguration, die Quelldateien bleiben unangetastet."""
-        n = len(self._deferred_jobs)
-        self._deferred_jobs.clear()
-        if n:
-            jobs = n_text(n, "gespeicherter Job", "gespeicherte Jobs")
-            self.log.log(f"{jobs} der letzten Sitzung verworfen.", "dim")
-        self._sync_state()
-        self._safe_save()
 
     def _autosize(self, allow_shrink: bool = False) -> None:
         top = self.winfo_toplevel()
@@ -551,18 +547,46 @@ class MainWindow(ttk.Frame):
 
     def _refresh_all(self) -> None:
         """Nach Profil-/Planänderungen: alles Abgeleitete neu zeichnen."""
-        self.rule_label.configure(text=describe(self.profile))
         self.files_label.configure(text=f"DATEIEN ({len(self.plans)})")
         for path, plan in self.plans.items():
             if plan is not None:
                 self._update_file_row(path, plan)
         plan = self._selected_plan()
+        waiting = self.selected in self._watch
         self.tracks_label.configure(
-            text=("SPUREN · " + Path(self.selected).name) if plan else "SPUREN")
+            text=("SPUREN · " + Path(self.selected).name)
+            if plan or waiting else "SPUREN")
         self.track_table.set_plan(plan)
         self._update_preview()
         self._update_stereo_panel_visibility()
         self._update_start_button()
+        self._sync_profile_box()
+
+    def _shown_profile(self) -> RuleProfile:
+        """Das Profil, das die Regel-Zeile zeigt: bei einer markierten Zeile
+        ohne erreichbare Quelle das ihres gespeicherten Jobs (gelöschtes →
+        Ersatzprofil), sonst self.profile — die Vorlage für neue Dateien."""
+        if self.selected in self._watch:
+            name = self._pending_restore.get(self.selected, {}).get(
+                "profile_name")
+            if name:
+                return self.cfg.profile(name)
+        return self.profile
+
+    def _sync_profile_box(self) -> None:
+        """Profil-Auswahl, Regel-Beschreibung und Profil-Knöpfe. Gesperrt im
+        Lauf und bei einer markierten Zeile ohne erreichbare Quelle: Ihr
+        gespeicherter Job bleibt, wie er ist — die Box nennt nur sein
+        Profil, die Vorlage für neue Dateien (self.profile) bleibt dabei
+        unberührt; „Bearbeiten …“/„Auf alle Dateien“ gälten sonst einem
+        anderen Profil als dem angezeigten."""
+        profile = self._shown_profile()
+        self.profile_cb.set(profile.name)
+        self.rule_label.configure(text=describe(profile))
+        locked = self._running or self.selected in self._watch
+        self.profile_cb.configure(state="disabled" if locked else "readonly")
+        for button in self._profile_buttons:
+            button.configure(state="disabled" if locked else "normal")
 
     def _update_file_row(self, path: str, plan: FilePlan) -> None:
         total = len(plan.media.tracks)
@@ -584,8 +608,9 @@ class MainWindow(ttk.Frame):
     def _update_preview(self) -> None:
         plan = self._selected_plan()
         if plan is None:
-            self.preview_label.configure(text="")
-            self.warn_label.configure(text="")
+            preview, note = self._waiting_note(self.selected)
+            self.preview_label.configure(text=preview)
+            self.warn_label.configure(text=note)
             return
         counts = plan.output_track_count
         video_part = f"{counts['video']}× Video"
@@ -616,6 +641,28 @@ class MainWindow(ttk.Frame):
             notes.append(sub_note)
         self.warn_label.configure(
             text=("⚠ " + "  ·  ".join(notes)) if notes else "")
+
+    def _waiting_note(self, path: str | None) -> tuple[str, str]:
+        """(Vorschau, Hinweis) für eine markierte Zeile, deren Quelle nicht
+        erreichbar ist — sonst zwei Leertexte. Spuren gibt es ohne Scan
+        keine; der gespeicherte Job bleibt, wie er ist."""
+        state = self._watch.state(path) if path else None
+        if state is None:
+            return "", ""
+        # das Profil, das beim Einlesen gilt (gelöschtes → Ersatzprofil)
+        profile = self._pending_restore.get(path, {}).get("profile_name")
+        preview = "Gespeicherte Einstellungen bleiben erhalten" + (
+            f" · Profil „{self.cfg.profile(profile).name}“" if profile
+            else "")
+        if state == _W.CHECKING:
+            return preview, "Quelle wird geprüft …"
+        if state == _W.NO_FILE:
+            return preview, ("⚠ Datei nicht gefunden, das Laufwerk ist da — "
+                             "verschoben, umbenannt oder gelöscht? Liegt sie "
+                             "wieder am alten Ort, liest Spurwerk sie "
+                             "automatisch ein; sonst „Entfernen“.")
+        return preview, ("⚠ Laufwerk nicht verbunden — sobald es wieder da "
+                         "ist, liest Spurwerk die Datei automatisch ein.")
 
     def _update_stereo_panel_visibility(self) -> None:
         # Das Panel zeigt und editiert die Konfiguration der AUSGEWÄHLTEN Datei
@@ -662,8 +709,11 @@ class MainWindow(ttk.Frame):
     def add_files(self, paths: list[str]) -> None:
         # Pfade kanonisieren: sonst landet dieselbe Datei über Slash-Form
         # oder Groß-/Kleinschreibung doppelt in der Liste. Ein fehlge-
-        # schlagener Scan darf erneut hinzugefügt werden → neuer Versuch.
-        retry = {p.lower(): p for p in self._scan_failed if p in self.plans}
+        # schlagener Scan darf erneut hinzugefügt werden → neuer Versuch;
+        # ebenso eine Zeile, die auf ihr Laufwerk wartet (es ist offenbar
+        # wieder da — ihr gespeicherter Job kommt mit).
+        retry = {p.lower(): p for p in (*self._scan_failed, *self._watch)
+                 if p in self.plans}
         known = {p.lower() for p in self.plans} - set(retry)
         added: list[str] = []
         for raw in paths:
@@ -685,18 +735,13 @@ class MainWindow(ttk.Frame):
             return
         retried = 0
         for path in added:
-            if path in self._scan_failed:
+            if path in self._scan_failed or path in self._watch:
                 self._scan_failed.discard(path)
+                self._watch.discard(path)
                 retried += 1
                 self.file_list.update_file(
                     path, plan_text="wird analysiert …",
                     status="wird gescannt", tag="dim")
-            else:
-                # Job der letzten Sitzung, dessen Laufwerk wieder da ist:
-                # seine gespeicherte Konfiguration kommt mit
-                job = session.pop_job(self._deferred_jobs, path)
-                if job is not None:
-                    self._pending_restore.setdefault(path, job)
             self.plans[path] = None
             if not self.file_list.contains(path):
                 self.file_list.add_file(path)
@@ -764,6 +809,9 @@ class MainWindow(ttk.Frame):
         top.bind("<Control-O>", self._on_ctrl_o)
         self.file_list.tree.bind("<Delete>",
                                  lambda _e: self._remove_selected())
+        # Zurück im Fenster (z. B. nach dem Einstecken der USB-Platte):
+        # wartende Zeilen sofort prüfen, nicht erst im nächsten Takt
+        top.bind("<FocusIn>", self._on_focus_in, add="+")
 
     def _on_ctrl_o(self, event) -> None:
         if event.state & 0x0001:   # Umschalt-Taste gedrückt
@@ -802,23 +850,50 @@ class MainWindow(ttk.Frame):
     def _clear_files(self) -> None:
         if self._running:
             return
+        # Zeilen ohne erreichbare Quelle — auch die noch geprüften (ein
+        # hängendes NAS hält sie lange in „wird geprüft“) — lassen sich
+        # nicht einfach neu erzeugen: ihre Einstellungen nur nach Rückfrage
+        # verwerfen
+        question = self._clear_question()
+        if question:
+            answer = Messagebox.yesno(question, "Liste leeren", parent=self)
+            if answer not in ("Ja", "Yes"):
+                return
         self.plans.clear()
         self._pending_restore.clear()
         self._scan_failed.clear()
-        # „Leeren“ leert die ganze Warteschlange — auch zurückgestellte Jobs
-        # von nicht verbundenen Laufwerken (sonst blieben sie unsichtbar ewig)
-        self._deferred_jobs.clear()
+        self._watch.clear()
         self.selected = None
         self.file_list.clear()
         self._sync_state()
         self._refresh_all()
         self._safe_save()
 
+    def _clear_question(self) -> str:
+        """Rückfrage vor „Leeren“ — leer, wenn keine Zeile ohne erreichbare
+        Quelle betroffen ist."""
+        counts = self._watch.counts()
+        parts = []
+        if n := counts.get(_W.NO_DRIVE):
+            parts.append(f"{n_text(n, 'Datei wartet', 'Dateien warten')} "
+                         f"auf ein nicht verbundenes Laufwerk")
+        if n := counts.get(_W.NO_FILE):
+            parts.append(f"{n_text(n, 'Datei wurde', 'Dateien wurden')} "
+                         f"nicht gefunden")
+        if n := counts.get(_W.CHECKING):
+            parts.append(f"{n_text(n, 'Datei wird', 'Dateien werden')} "
+                         f"noch geprüft")
+        if not parts:
+            return ""
+        return (f"{_join(parts)} — ihre gespeicherten Einstellungen gehen "
+                f"verloren.\n\nTrotzdem leeren?")
+
     def _forget_job(self, path: str) -> None:
         """Entfernte Datei: keine alte Sitzungs-Konfiguration mehr anwenden,
         falls sie später erneut hinzugefügt wird."""
         self._pending_restore.pop(path, None)
         self._scan_failed.discard(path)
+        self._watch.discard(path)
 
     def _on_file_selected(self, path: str) -> None:
         self.selected = path
@@ -832,6 +907,13 @@ class MainWindow(ttk.Frame):
             self.profile.output.directory = self.output_dir
             self.stereo = plan.stereo
             self._sync_panel_from_state()
+        else:
+            # Noch ohne Plan (wird gescannt, Quelle nicht erreichbar): Panel
+            # von der zuvor markierten Datei lösen — sonst landete eine
+            # Eingabe in deren Plan. Die Vorlage für neue Dateien bleibt;
+            # das Profil eines wartenden Jobs zeigt nur die Profil-Box
+            # (gesperrt, siehe _sync_profile_box).
+            self.stereo = replace(self.stereo)
         self._refresh_all()
 
     def _sync_panel_from_state(self) -> None:
@@ -857,29 +939,48 @@ class MainWindow(ttk.Frame):
         self.track_table.convert_label = self.stereo.short_label()
 
     def _file_context_menu(self, event) -> None:
-        import tkinter as tk
         path = self.file_list.tree.identify_row(event.y)
         if not path:
             return
         self.file_list.select(path)
+        self._file_menu(path).tk_popup(event.x_root, event.y_root)
+
+    def _file_menu(self, path: str):
+        """Kontextmenü einer Zeile der Dateiliste."""
+        import tkinter as tk
         plan = self.plans.get(path)
         menu = tk.Menu(self, tearoff=0)
         # Während eines Laufs sind Plan-Änderungen gesperrt (der Runner
         # arbeitet auf Snapshots — eine Änderung würde still ignoriert).
         lock = "disabled" if self._running else "normal"
-        if plan is not None:
-            menu.add_command(label="Ausgabename/-ort ändern …", state=lock,
-                             command=lambda: self._change_output(plan))
+        if path in self._watch:
+            # Quelle nicht erreichbar: alles, was die Datei braucht, ist aus
+            if self._watch.checking:
+                menu.add_command(label="Quelle wird gerade geprüft …",
+                                 state="disabled")
+            else:
+                menu.add_command(label="Jetzt erneut prüfen",
+                                 command=self._check_sources)
+            menu.add_separator()
+            for label in ("Ausgabename/-ort ändern …", "Ausgabeordner öffnen",
+                          "Quellordner öffnen"):
+                menu.add_command(label=label, state="disabled")
+        else:
+            if plan is not None:
+                menu.add_command(label="Ausgabename/-ort ändern …",
+                                 state=lock,
+                                 command=lambda: self._change_output(plan))
+                menu.add_command(
+                    label="Ausgabeordner öffnen",
+                    command=lambda: self._open_folder(
+                        Path(plan.output_path).parent))
             menu.add_command(
-                label="Ausgabeordner öffnen",
-                command=lambda: self._open_folder(
-                    Path(plan.output_path).parent))
-        menu.add_command(label="Quellordner öffnen",
-                         command=lambda: self._open_folder(Path(path).parent))
+                label="Quellordner öffnen",
+                command=lambda: self._open_folder(Path(path).parent))
         menu.add_separator()
         menu.add_command(label="Aus der Liste entfernen", state=lock,
                          command=self._remove_selected)
-        menu.tk_popup(event.x_root, event.y_root)
+        return menu
 
     def _open_folder(self, folder: Path) -> None:
         """Ordner im Explorer öffnen — ein gelöschter Ordner ist ein
@@ -1229,9 +1330,10 @@ class MainWindow(ttk.Frame):
 
     def _save_session(self) -> None:
         """Offene (nicht erledigte) Jobs für den nächsten Start merken —
-        auch noch nicht gescannte, fehlgeschlagene und zurückgestellte."""
-        self.cfg.session = session.session_jobs(
-            self.plans, self._pending_restore, self._deferred_jobs)
+        auch noch nicht gescannte, fehlgeschlagene und solche, deren
+        Laufwerk gerade fehlt; in der Reihenfolge der Liste."""
+        self.cfg.session = session.session_jobs(self.plans,
+                                                self._pending_restore)
 
     def _safe_save(self) -> None:
         self.cfg.log_expanded = self.log.expanded
@@ -1251,29 +1353,124 @@ class MainWindow(ttk.Frame):
                     f"beschreibbaren Ordner legen (nicht unter „Programme“).")
 
     def _restore_session(self) -> None:
-        """Beim Start die zuletzt offenen Jobs wieder laden."""
-        saved = list(self.cfg.session)
-        if not saved:
+        """Beim Start die zuletzt offenen Jobs wieder in die Liste holen —
+        in ihrer Reihenfolge, zunächst als „wird geprüft“. Ob die Quelle
+        erreichbar ist, klärt die Hintergrund-Prüfung (ein getrenntes
+        Netzlaufwerk kann dabei viele Sekunden hängen): Erreichbare werden
+        normal eingelesen, die übrigen warten sichtbar auf ihr Laufwerk."""
+        jobs = session.restorable_jobs(self.cfg.session, listed=self.plans)
+        if not jobs:
             return
-        reachable, self._deferred_jobs = session.split_reachable(saved)
-        if self._deferred_jobs:
-            n = len(self._deferred_jobs)
-            self.log.log(
-                f"{n_text(n, 'Job', 'Jobs')} der letzten Sitzung nicht "
-                f"gefunden (Laufwerk nicht verbunden?) — "
-                f"{'bleibt' if n == 1 else 'bleiben'} gespeichert; "
-                f"„Leeren“ verwirft {'ihn' if n == 1 else 'sie'}.", "warn")
-            # im Leerzustand (alle Jobs unerreichbar) sähe man das Protokoll
-            # nicht — dort zeigt _sync_state den Hinweis samt „Verwerfen“
-            self._sync_state()
-        paths = []
-        for job in reachable:
-            self._pending_restore[job["path"]] = job
-            paths.append(job["path"])
+        for path, job in jobs:
+            self.plans[path] = None
+            self._pending_restore[path] = job
+            self._watch.watch(path)
+            self.file_list.add_file(
+                path, **_WAITING_ROW[_W.CHECKING])
+        self.log.log(f"{n_text(len(jobs), 'Job', 'Jobs')} aus der "
+                     f"letzten Sitzung wiederhergestellt.", "info")
+        self._sync_state()
+        self._refresh_all()
+        self._check_sources()
+
+    # ══ Quellen auf nicht verbundenen Laufwerken ═════════════════════════
+
+    def _check_sources(self) -> None:
+        """Wartende Zeilen jetzt prüfen — im Hintergrund, eine Prüfung zur
+        Zeit; ohne wartende Zeilen startet keine."""
+        if self._watch_after is not None:
+            self.after_cancel(self._watch_after)
+            self._watch_after = None
+        paths = self._watch.begin_check()
         if paths:
-            self.log.log(f"{n_text(len(paths), 'Job', 'Jobs')} aus der "
-                         f"letzten Sitzung wiederhergestellt.", "info")
-            self.add_files(paths)
+            threading.Thread(target=self._source_worker, args=(paths,),
+                             daemon=True).start()
+
+    def _schedule_source_check(self) -> None:
+        """Nächste Prüfung im Takt — nur, solange geprüfte Zeilen auf ihre
+        Quelle warten und keine Prüfung läuft."""
+        if (self._watch_after is None and not self._watch.checking
+                and self._watch.waiting()):
+            self._watch_after = self.after(SOURCE_CHECK_MS,
+                                           self._on_source_timer)
+
+    def _on_source_timer(self) -> None:
+        self._watch_after = None
+        self._check_sources()
+
+    def _on_focus_in(self, event) -> None:
+        # nur der Fokus aufs Fenster selbst, nicht jeder Widget-Wechsel darin
+        if (self.winfo_exists() and self._watch.waiting()
+                and str(event.widget) == str(self.winfo_toplevel())):
+            self._check_sources()
+
+    def _source_worker(self, paths: list[str]) -> None:
+        """Hintergrund: erreichbar, Laufwerk fehlt oder nur die Datei — je
+        Laufwerk ein eigener Faden, damit ein hängendes NAS die USB-Platte
+        nicht aufhält. Jeder Befund geht sofort an die UI, der Abschluss
+        immer."""
+        def check(group: list[str]) -> None:
+            for path, finding in session.probe_sources(group):
+                self.ui_q.put(("SOURCE", path, finding))
+        try:
+            threads = [threading.Thread(target=check, args=(group,),
+                                        daemon=True)
+                       for group in session.by_drive(paths)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        finally:
+            self.ui_q.put(("SOURCE_DONE",))
+
+    def _on_source(self, path: str, finding: str) -> None:
+        before = self._watch.state(path)
+        outcome = self._watch.result(path, finding)
+        if outcome is None:
+            return
+        name = Path(path).name
+        if outcome in (_W.FOUND, _W.BACK):
+            if outcome == _W.BACK:
+                self.log.log(
+                    f"Laufwerk wieder da: {name} wird eingelesen."
+                    if before == _W.NO_DRIVE
+                    else f"Datei wieder gefunden: {name} wird eingelesen.",
+                    "info")
+            # normaler Job über den bestehenden Wiederherstellungsweg: Scan,
+            # dann „SCANNED“ mit dem gespeicherten Job aus _pending_restore
+            self.file_list.update_file(path, plan_text="wird analysiert …",
+                                       status="wird gescannt", tag="dim")
+            threading.Thread(target=self._scan_worker, args=(path,),
+                             daemon=True).start()
+        else:
+            # neuer Zustand: Laufwerk fehlt bzw. nur die Datei
+            self.file_list.update_file(path, **_WAITING_ROW[outcome])
+            if before == _W.NO_DRIVE:
+                self.log.log(f"Laufwerk wieder da, {name} dort aber nicht "
+                             f"gefunden — verschoben oder gelöscht?", "warn")
+        if self.selected == path:
+            self._refresh_all()   # Hinweis/Profil der markierten Zeile
+
+    def _on_source_done(self) -> None:
+        new = self._watch.end_check()
+        if n := new.get(_W.NO_DRIVE, 0):
+            one = n == 1
+            self.log.log(
+                f"{n_text(n, 'Datei', 'Dateien')} der letzten Sitzung "
+                f"{'wartet' if one else 'warten'} auf ihr Laufwerk (nicht "
+                f"verbunden) — {'sie bleibt' if one else 'sie bleiben'} "
+                f"samt Einstellungen in der Liste und "
+                f"{'wird' if one else 'werden'} automatisch eingelesen, "
+                f"sobald es wieder da ist.", "warn")
+        if n := new.get(_W.NO_FILE, 0):
+            one = n == 1
+            self.log.log(
+                f"{n_text(n, 'Datei', 'Dateien')} der letzten Sitzung nicht "
+                f"gefunden, obwohl das Laufwerk da ist (verschoben oder "
+                f"gelöscht?) — {'sie bleibt' if one else 'sie bleiben'} "
+                f"samt Einstellungen in der Liste; „Entfernen“ nimmt sie "
+                f"heraus.", "warn")
+        self._schedule_source_check()
 
     # ══ Start / Abbruch ══════════════════════════════════════════════════
 
@@ -1345,6 +1542,16 @@ class MainWindow(ttk.Frame):
 
         self.cancel.clear()
         self.log.clear()
+        # Zeilen ohne erreichbare Quelle laufen nie mit — auch nicht die
+        # noch geprüften; sie warten weiter
+        counts = self._watch.counts()
+        if waiting := sum(counts.values()):
+            why = _join([reason for state, reason in _SKIP_REASON.items()
+                         if state in counts], "oder")
+            self.log.log(
+                f"{n_text(waiting, 'Datei', 'Dateien')} übersprungen — "
+                f"{why}; {'sie bleibt' if waiting == 1 else 'sie bleiben'} "
+                f"in der Warteschlange.", "warn")
         for plan in plans:
             plan.status = FileStatus.WAITING
             self._update_file_row(plan.media.path, plan)
@@ -1369,6 +1576,7 @@ class MainWindow(ttk.Frame):
             widget.configure(state=widget_state)
         for combo in self._lock_combos:
             combo.configure(state=combo_state)
+        self._sync_profile_box()
         self.track_table.locked = running
         self.start_btn.configure(state="disabled" if running else "normal")
         self.cancel_btn.configure(state="normal" if running else "disabled")
@@ -1500,6 +1708,10 @@ class MainWindow(ttk.Frame):
             # kaputter Dateien (erneut hinzufügen bleibt der Weg dafür)
             if mkvmerge is not None and mkvmerge.ok and mkvmerge != before:
                 self._rescan_failed()
+        elif kind == "SOURCE":
+            self._on_source(msg[1], msg[2])
+        elif kind == "SOURCE_DONE":
+            self._on_source_done()
         elif kind == "UPDATE":
             self._show_update(msg[1])
         elif kind == "TOOL_LATEST":
