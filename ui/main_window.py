@@ -81,6 +81,9 @@ class MainWindow(ttk.Frame):
         self._tools_ready = threading.Event()   # gesetzt, sobald Tools erkannt
         self.tools: dict[str, str] = {}
         self.tool_status: dict[str, toolchain.ToolStatus] = {}
+        # neueste Werkzeug-Versionen laut Update-Prüfung (None = ungeprüft)
+        self.tool_latest: dict[str, str | None] | None = None
+        self._tool_updates_logged: tuple = ()
         self.output_dir = cfg.output_dir     # fester Ausgabeordner (bleibt)
         self._running = False
         self._lock_buttons: list = []   # während des Laufs gesperrt
@@ -140,6 +143,18 @@ class MainWindow(ttk.Frame):
         self.update_chip = ttk.Label(chips, text="", cursor="hand2",
                                      foreground=theme.COLORS["info"],
                                      font=("Segoe UI", 9, "bold"))
+        # Werkzeug-Updates — ebenso unsichtbar, bis die Prüfung eine sicher
+        # neuere Version findet; führt direkt in den Werkzeuge-Dialog.
+        # ▲ steht für „Update verfügbar“ (App wie Werkzeuge): Segoe UI fett
+        # hat es selbst — ⬆/⟳/⭑ fallen dort auf Ersatzkästchen bzw. einen
+        # Punkt zurück, ★ ist in der Spurtabelle schon „Standard-Audiospur“
+        self.tools_update_chip = ttk.Label(chips, text="", cursor="hand2",
+                                           foreground=theme.COLORS["info"],
+                                           font=("Segoe UI", 9, "bold"))
+        self.tools_update_chip.bind(
+            "<Button-1>", lambda _e: self._open_tool_manager())
+        _tip(self.tools_update_chip,
+             "Neue Werkzeug-Versionen verfügbar — klicken zum Aktualisieren")
         self._info_btn = ttk.Button(chips, text="ⓘ", width=3,
                                     bootstyle="secondary-outline",
                                     command=self._open_about)
@@ -1281,6 +1296,8 @@ class MainWindow(ttk.Frame):
             self._update_tool_chips()
         elif kind == "UPDATE":
             self._show_update(msg[1])
+        elif kind == "TOOL_LATEST":
+            self._on_tool_latest(msg[1])
         elif kind == "BATCH_DONE":
             self._on_batch_done(msg[1], msg[2], msg[3])
 
@@ -1343,15 +1360,18 @@ class MainWindow(ttk.Frame):
     def _check_updates(self) -> None:
         """Läuft im Hintergrund; meldet nur, wenn wirklich etwas Neueres da
         ist. Offline/Storung → still nichts (siehe core.update)."""
-        from core import update
+        from core import downloader, update
         from version import __version__
         info = update.check_latest(__version__)
         if info is not None:
             self.ui_q.put(("UPDATE", info))
+        # Werkzeuge: dieselbe Einstellung, je eine kurze Versionsabfrage
+        # (wirft nie — Ausfälle kommen als None zurück)
+        self.ui_q.put(("TOOL_LATEST", downloader.latest_versions()))
 
     def _show_update(self, info) -> None:
         self.update_chip.configure(
-            text=f"  ⭑ Version {info.latest} verfügbar")
+            text=f"  ▲ Version {info.latest} verfügbar")
         self.update_chip.pack(side="left", padx=(0, 10),
                               before=self._info_btn)
         self.update_chip.bind(
@@ -1362,6 +1382,36 @@ class MainWindow(ttk.Frame):
     def _open_update(self, url: str) -> None:
         import webbrowser
         webbrowser.open(url)
+
+    def _on_tool_latest(self, latest: dict[str, str | None]) -> None:
+        # Ein Totalausfall (offline) überschreibt kein bekanntes Ergebnis
+        if not any(latest.values()) and self.tool_latest:
+            return
+        self.tool_latest = latest
+        self._update_tool_update_chip()
+
+    def _update_tool_update_chip(self) -> None:
+        updates = toolchain.pending_updates(self.tool_status,
+                                            self.tool_latest or {})
+        if not updates:
+            self.tools_update_chip.pack_forget()
+            return
+        titles = toolchain.KIND_TITLE
+        if len(updates) == 1:
+            text = f"  ▲ {titles[updates[0].kind]} {updates[0].latest}"
+        else:
+            text = f"  ▲ {len(updates)} Werkzeug-Updates"
+        self.tools_update_chip.configure(text=text)
+        self.tools_update_chip.pack(side="left", padx=(0, 10),
+                                    before=self._info_btn)
+        # ins Protokoll nur, wenn sich die Liste geändert hat — nicht bei
+        # jeder erneuten Tool-Prüfung
+        if tuple(updates) != self._tool_updates_logged:
+            self._tool_updates_logged = tuple(updates)
+            details = ", ".join(f"{titles[u.kind]} {u.installed} → {u.latest}"
+                                for u in updates)
+            self.log.log(f"Werkzeug-Updates verfügbar: {details} — Hinweis "
+                         f"oben anklicken oder ⚙ Werkzeuge öffnen.", "info")
 
     def _update_tool_chips(self) -> None:
         for name, status in self.tool_status.items():
@@ -1376,6 +1426,7 @@ class MainWindow(ttk.Frame):
         self.track_table.dovi_ok = bool(
             self.tool_status.get("dovi_tool")
             and self.tool_status["dovi_tool"].ok)
+        self._update_tool_update_chip()   # nach einem Update verschwindet er
         self._update_onboarding()
 
     def _update_onboarding(self) -> None:
@@ -1396,7 +1447,9 @@ class MainWindow(ttk.Frame):
         dialog = ToolManagerDialog(
             self, self.cfg, self.tool_status,
             on_changed=lambda: threading.Thread(
-                target=self._probe_tools, daemon=True).start())
+                target=self._probe_tools, daemon=True).start(),
+            latest=self.tool_latest, on_latest=self._on_tool_latest,
+            is_busy=lambda: self._running)
         if auto_download:
             dialog.after(300, lambda: dialog._download(only_missing=True))
 

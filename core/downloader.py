@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -36,6 +37,7 @@ from version import USER_AGENT as _APP_USER_AGENT
 
 USER_AGENT = f"{_APP_USER_AGENT} (Tool-Downloader; Windows)"
 TIMEOUT = 30
+CHECK_TIMEOUT = 8    # reine Versionsabfragen: kurz, damit offline nichts hängt
 CHUNK = 1024 * 1024
 
 MKVTOOLNIX_XML = "https://mkvtoolnix.download/latest-release.xml.gz"
@@ -47,6 +49,8 @@ WIN32_BASE = ("https://github.com/sudo-nautilus/FFmpeg-Builds-Win32"
               "/releases/latest/download")
 
 DOVI_API = "https://api.github.com/repos/quietvoid/dovi_tool/releases/latest"
+DOVI_LATEST = "https://github.com/quietvoid/dovi_tool/releases/latest"
+DOVI_DOWNLOAD = "https://github.com/quietvoid/dovi_tool/releases/download"
 
 DOWNLOAD_PAGES = {
     "mkvtoolnix": "https://mkvtoolnix.download/downloads.html",
@@ -79,18 +83,36 @@ def os_is_64bit() -> bool:
 # ── HTTP-Bausteine ────────────────────────────────────────────────────────
 
 
-def _open(url: str):
+def _open(url: str, timeout: float = TIMEOUT):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    return urllib.request.urlopen(request, timeout=TIMEOUT)
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
-def _get_bytes(url: str) -> bytes:
-    with _open(url) as response:
+def _get_bytes(url: str, timeout: float = TIMEOUT) -> bytes:
+    with _open(url, timeout) as response:
         return response.read()
 
 
-def _get_text(url: str) -> str:
-    return _get_bytes(url).decode("utf-8", errors="replace").strip()
+def _get_text(url: str, timeout: float = TIMEOUT) -> str:
+    return _get_bytes(url, timeout).decode("utf-8", errors="replace").strip()
+
+
+def _final_url(url: str, timeout: float = TIMEOUT) -> str:
+    """Ziel-URL nach allen Weiterleitungen — per HEAD, lädt keinen Inhalt."""
+    request = urllib.request.Request(url, method="HEAD",
+                                     headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.geturl()
+
+
+def _release_number(text: str) -> str:
+    """Nur eine saubere Release-Nummer („102.0“, „9.0.2“) durchlassen —
+    eine Fehlerseite oder ein Platzhalter darf nie als Version gelten."""
+    text = text.strip().lstrip("vV")
+    parts = text.split(".")
+    if len(parts) < 2 or not all(p.isdigit() for p in parts):
+        raise ValueError(f"keine Versionsnummer: {text[:40]!r}")
+    return text
 
 
 def _download(url: str, dest: Path, progress: ProgressCb, label: str,
@@ -176,8 +198,8 @@ def _extract_members(archive: Path, wanted_suffixes: dict[str, str],
 # ── MKVToolNix ────────────────────────────────────────────────────────────
 
 
-def mkvtoolnix_latest_version() -> str:
-    xml_data = gzip.decompress(_get_bytes(MKVTOOLNIX_XML))
+def mkvtoolnix_latest_version(timeout: float = TIMEOUT) -> str:
+    xml_data = gzip.decompress(_get_bytes(MKVTOOLNIX_XML, timeout))
     version = ET.fromstring(xml_data).findtext("latest-source/version")
     if not version:
         raise DownloadError("Konnte MKVToolNix-Version nicht ermitteln.")
@@ -282,6 +304,41 @@ def _ffmpeg_from(url: str, sums_url: str, version: str, tools_dir: Path,
 # ── dovi_tool (DV/HDR-Kompatibilitäts-Remux) ─────────────────────────────
 
 
+def dovi_tool_release(timeout: float = TIMEOUT) -> tuple[str, dict]:
+    """(Version, Windows-x64-Asset) des neuesten dovi_tool-Releases."""
+    release = json.loads(_get_bytes(DOVI_API, timeout))
+    version = str(release.get("tag_name", "?")).strip().lstrip("vV")
+    # Achtung: im selben Release liegt auch libdovi-*-windows-msvc.zip —
+    # deshalb strikt aufs dovi_tool-Präfix matchen
+    asset = next(
+        a for a in release.get("assets", [])
+        if a["name"].startswith("dovi_tool-")
+        and "x86_64-pc-windows" in a["name"]
+        and a["name"].endswith(".zip"))
+    return version, asset
+
+
+def _dovi_tool_release_via_web(timeout: float = TIMEOUT) -> tuple[str, dict]:
+    """Ersatzweg ohne API (z. B. API-Limit bei geteilter IP): Version aus
+    der latest-Weiterleitung, Asset nach dem festen Namensschema — dann
+    allerdings ohne Digest."""
+    tag = _final_url(DOVI_LATEST, timeout).rstrip("/").rsplit("/", 1)[-1]
+    version = _release_number(tag)
+    name = f"dovi_tool-{version}-x86_64-pc-windows-msvc.zip"
+    return version, {"name": name, "browser_download_url":
+                     f"{DOVI_DOWNLOAD}/{tag}/{name}"}
+
+
+def _asset_sha256(asset: dict) -> str | None:
+    """GitHub liefert seit 2025 pro Asset „digest“: „sha256:<hex>“."""
+    digest = str(asset.get("digest") or "")
+    if digest.lower().startswith("sha256:"):
+        value = digest.split(":", 1)[1].strip().lower()
+        if len(value) == 64:
+            return value
+    return None
+
+
 def download_dovi_tool(tools_dir: Path, progress: ProgressCb,
                        cancel: threading.Event) -> DownloadResult:
     """dovi_tool von GitHub — die Versionsnummer steckt im Asset-Namen,
@@ -291,24 +348,26 @@ def download_dovi_tool(tools_dir: Path, progress: ProgressCb,
     tools_dir.mkdir(parents=True, exist_ok=True)
     progress("Ermittle aktuelle dovi_tool-Version …", None)
     try:
-        import json
-        release = json.loads(_get_bytes(DOVI_API))
-        version = str(release.get("tag_name", "?"))
-        # Achtung: im selben Release liegt auch libdovi-*-windows-msvc.zip —
-        # deshalb strikt aufs dovi_tool-Präfix matchen
-        asset = next(
-            a for a in release.get("assets", [])
-            if a["name"].startswith("dovi_tool-")
-            and "x86_64-pc-windows" in a["name"]
-            and a["name"].endswith(".zip"))
+        try:
+            version, asset = dovi_tool_release()
+        except OSError:
+            # API gestört/limitiert → normaler Release-Link, wie bei
+            # Quellen ohne Prüfsummen-Datei dann ohne SHA-256
+            progress("GitHub-API nicht erreichbar — nehme den Release-Link "
+                     "(ohne Prüfsumme) …", None)
+            version, asset = _dovi_tool_release_via_web()
     except (OSError, StopIteration, ValueError, KeyError) as exc:
         raise DownloadError(
             f"GitHub-Release nicht auflösbar: {exc}") from exc
 
+    expected = _asset_sha256(asset)   # None: ältere Releases, Ersatzweg
     archive = tools_dir / asset["name"]
     try:
-        _download(asset["browser_download_url"], archive, progress,
-                  f"dovi_tool {version}", cancel)
+        actual = _download(asset["browser_download_url"], archive, progress,
+                           f"dovi_tool {version}", cancel)
+        if expected and actual != expected:
+            raise DownloadError("SHA-256-Prüfung fehlgeschlagen — "
+                                "Download beschädigt?")
         files = _extract_members(
             archive, {"dovi_tool.exe": "dovi_tool.exe"}, tools_dir, progress)
         return DownloadResult("dovi_tool", version, files)
@@ -321,3 +380,49 @@ DOWNLOADERS = {
     "ffmpeg": download_ffmpeg,
     "dovi_tool": download_dovi_tool,
 }
+
+
+# ── Update-Prüfung ────────────────────────────────────────────────────────
+
+
+def _latest_mkvtoolnix() -> str:
+    return _release_number(mkvtoolnix_latest_version(CHECK_TIMEOUT))
+
+
+def _latest_ffmpeg() -> str | None:
+    # Nur gyan.dev nennt eine Release-Nummer; die 32-bit-Quelle liefert
+    # ausschließlich „master-latest“-Snapshots ohne vergleichbare Version
+    if not os_is_64bit():
+        return None
+    return _release_number(_get_text(GYAN_VERSION, CHECK_TIMEOUT))
+
+
+def _latest_dovi_tool() -> str | None:
+    # Die Weiterleitung von releases/latest (…/tag/2.3.4) statt der API:
+    # zählt nicht gegen GitHubs API-Limit (60 Anfragen/Stunde je IP), das
+    # sich die App-Update-Prüfung und der eigentliche Download teilen
+    if not os_is_64bit():
+        return None
+    tag_url = _final_url(DOVI_LATEST, CHECK_TIMEOUT)
+    return _release_number(tag_url.rstrip("/").rsplit("/", 1)[-1])
+
+
+LATEST_CHECKS = {
+    "mkvtoolnix": _latest_mkvtoolnix,
+    "ffmpeg": _latest_ffmpeg,
+    "dovi_tool": _latest_dovi_tool,
+}
+
+
+def latest_versions() -> dict[str, str | None]:
+    """Neueste veröffentlichte Version je Download-Paket — genau das, was
+    der Downloader jetzt holen würde. None = nicht ermittelbar (offline,
+    Quelle gestört, keine Versionsangabe). Wirft nie: die Prüfung läuft
+    still im Hintergrund und darf die App nie stören."""
+    result: dict[str, str | None] = {}
+    for kind, check in LATEST_CHECKS.items():
+        try:
+            result[kind] = check()
+        except Exception:
+            result[kind] = None
+    return result

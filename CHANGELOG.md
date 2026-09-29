@@ -6,6 +6,34 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Werkzeuge aktualisieren:** Der Werkzeuge-Dialog (⚙) vergleicht die
+  installierten Versionen von MKVToolNix, FFmpeg und dovi_tool mit den
+  offiziellen Quellen und zeigt pro Werkzeug „✓ aktuell" oder „⬆ Version
+  … verfügbar". Ein Klick aktualisiert einzeln, „Alle aktualisieren"
+  alles auf einmal — wie beim Erst-Download SHA-256-geprüft. Findet die
+  Startprüfung neue Versionen, erscheint oben ein ▲-Hinweis, der direkt
+  in den Dialog führt. Entwicklungs-Builds (z. B. FFmpeg-Git-Snapshots)
+  werden ehrlich als „nicht vergleichbar" geführt statt geraten.
+  Die Prüfung hängt am bestehenden Schalter „Beim Start nach Updates
+  suchen" im Über-Dialog.
+
+### Geändert
+- **dovi_tool-Downloads werden jetzt per SHA-256 geprüft** (Prüfsumme aus
+  den GitHub-Release-Daten) — bisher kam dovi_tool als einziges Werkzeug
+  ungeprüft.
+- **Update-Hinweise oben einheitlich mit ▲** (neue Spurwerk-Version wie
+  neue Werkzeuge) — das bisherige Zeichen ⭑ wurde in der fetten
+  Kopfzeilen-Schrift nur als winziger Punkt dargestellt.
+
+### Behoben
+- **Werkzeuge-Dialog: Meldungen verschwanden nach etwa einer Sekunde** —
+  „Fertig" und vor allem Download-Fehler wurden von der anschließenden
+  Neuprüfung sofort wieder gelöscht. Sie bleiben jetzt stehen.
+- **Werkzeug-Downloads während einer laufenden Verarbeitung** sind jetzt
+  gesperrt (mit Hinweis) — vorher konnte der Dialog eine gerade genutzte
+  EXE ersetzen wollen.
+
 ## [2.0.0] — 2026-07-06
 
 ### Geändert

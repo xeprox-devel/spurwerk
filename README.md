@@ -112,7 +112,9 @@ immer die Offline-Variante.
 2. **Beim ersten Start** bietet Spurwerk an, die benötigten freien
    Werkzeuge automatisch herunterzuladen: MKVToolNix und FFmpeg
    (Pflicht) sowie dovi_tool (optional, für „DV/HDR → HDR10").
-   Ein Klick, einmalig, fertig.
+   Ein Klick, einmalig, fertig. Gibt es später neue Versionen, zeigt
+   Spurwerk oben einen **▲-Hinweis** — ein Klick im Werkzeuge-Dialog
+   (⚙) aktualisiert einzeln oder alle auf einmal.
 3. **MKV-Dateien ins Fenster ziehen.** Spurwerk analysiert sie, wendet
    dein Profil an (z. B. „Deutsch bevorzugt") und zeigt dir in Klartext,
    was passieren wird. Passt? **Start.**
@@ -170,8 +172,10 @@ Datei (im Player zuschaltbar); gibt es eine Textspur gleicher Sprache,
 Windows 10/11 (64-bit). Die Werkzeuge lädt Spurwerk selbst.
 
 **Telefoniert Spurwerk nach Hause?**
-Nein, kein Tracking. Beim Start prüft Spurwerk mit einer einzigen Anfrage
-an GitHub, ob eine neuere Version vorliegt (abschaltbar im „Über"-Dialog).
+Nein, kein Tracking. Beim Start fragt Spurwerk nur die Versionsnummern ab:
+bei GitHub für sich selbst und für dovi_tool, bei mkvtoolnix.download und
+bei gyan.dev für die übrigen Werkzeuge (alles zusammen abschaltbar im
+„Über"-Dialog).
 Der optionale Titelabgleich sendet nur den Suchtitel an TMDb. Sonst geht
 nichts raus.
 
@@ -184,7 +188,8 @@ ganzen Ordner, `Entf` entfernt die markierte Datei aus der Liste.
 Spurwerk orchestriert bewährte freie Software: **MKVToolNix**
 (mkvtoolnix.download), **FFmpeg** (gyan.dev/BtbN) und **dovi_tool**
 (quietvoid) für „DV/HDR → HDR10". Spurwerk liefert sie nicht mit,
-sondern lädt sie auf Wunsch per Ein-Klick, geprüft per SHA-256.
+sondern lädt sie auf Wunsch per Ein-Klick, geprüft per SHA-256, und
+hält sie auf Wunsch aktuell.
 
 Der optionale Titelabgleich nutzt die **TMDb-API**, ist aber nicht von
 TMDb unterstützt oder zertifiziert.

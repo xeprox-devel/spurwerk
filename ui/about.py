@@ -74,8 +74,11 @@ class AboutDialog(ttk.Toplevel):
                 command=lambda: on_toggle_updates(self._updates_var.get())
             ).pack(anchor="w")
             ttk.Label(body,
-                      text="Eine einzige Anfrage an GitHub, ohne Tracking.",
-                      foreground=theme.MUTED).pack(anchor="w", pady=(2, 0))
+                      text="Für Spurwerk und seine Werkzeuge: je eine kurze\n"
+                           "Versionsabfrage bei GitHub, mkvtoolnix.download "
+                           "und\ngyan.dev — ohne Tracking.",
+                      foreground=theme.MUTED, justify="left"
+                      ).pack(anchor="w", pady=(2, 0))
 
         ttk.Button(body, text="Schließen", bootstyle="primary",
                    command=self.destroy).pack(anchor="e", pady=(18, 0))
