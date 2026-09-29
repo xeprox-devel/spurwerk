@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import ttkbootstrap as ttk
 
 import config as appconfig
 from ui import theme
+from ui.drop import load_tkdnd, mkv_paths, split_drop_data
 from ui.main_window import MainWindow
 from version import APP_NAME, __version__
 
@@ -21,8 +21,6 @@ except ImportError:
 
     class DnDWrapper:  # Fallback ohne Drag&Drop
         pass
-
-_DROP_RE = re.compile(r"\{([^}]+)\}|(\S+)")
 
 
 class SpurwerkApp(ttk.Window, DnDWrapper):
@@ -40,14 +38,15 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
         self._user_resized = False
         self._mapped = False
 
-        if DND_AVAILABLE:
-            self.TkdndVersion = TkinterDnD._require(self)
+        # tkinterdnd2 importierbar heißt nicht, dass tkdnd lädt (0.4/0.5
+        # unter Tcl 9) — dann ohne Drag&Drop starten statt abstürzen
+        self._dnd_ok = DND_AVAILABLE and load_tkdnd(self, TkinterDnD._require)
 
         self.cfg = appconfig.load()
-        self.main = MainWindow(self, self.cfg, dnd_ok=DND_AVAILABLE)
+        self.main = MainWindow(self, self.cfg, dnd_ok=self._dnd_ok)
         self.main.pack(fill="both", expand=True)
 
-        if DND_AVAILABLE:
+        if self._dnd_ok:
             self.drop_target_register(DND_FILES)
             self.dnd_bind("<<Drop>>", self._on_drop)
 
@@ -126,17 +125,18 @@ class SpurwerkApp(ttk.Window, DnDWrapper):
     # ── Drag & Drop ───────────────────────────────────────────────────────
 
     def _on_drop(self, event) -> None:
-        paths = [(m[0] or m[1]).strip()
-                 for m in _DROP_RE.findall(event.data)]
-        files: list[str] = []
-        for p in paths:
-            path = Path(p)
-            if path.is_dir():
-                files += sorted(str(f) for f in path.glob("*.mkv"))
-            elif p.lower().endswith(".mkv"):
-                files.append(p)
+        # event.data ist eine Tcl-Liste → Tcls eigener Parser, kein Regex
+        # (sonst zerfallen Namen mit „{imdb-tt…}“ stillschweigend)
+        items = split_drop_data(event.data, self.tk.splitlist)
+        files, skipped = mkv_paths(items)
         if files:
             self.main.add_files(files)
+        if skipped:
+            # Rückmeldung statt stillem Verwerfen (z. B. .mp4, leerer Ordner)
+            names = ", ".join(Path(p).name or p for p in skipped[:3])
+            more = f" (+{len(skipped) - 3} weitere)" if len(skipped) > 3 else ""
+            self.main.log.log(
+                f"Übersprungen (keine MKV-Datei): {names}{more}", "warn")
 
     # ── Sonstiges ─────────────────────────────────────────────────────────
 
