@@ -67,10 +67,74 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   scheinbar nichts; jetzt gilt der Pfad für die Sitzung, mit Hinweis.
 - Über-Dialog: sagt jetzt richtig, dass nur die Werkzeuge geladen werden
   und die übrigen Bibliotheken eingebaut sind.
+- **„DV/HDR → HDR10" behält das Timing der Videospur:** Startet das Bild
+  in der Quelle später als der Ton, hat es Lücken oder eine wechselnde
+  Bildrate, laufen Bild und Ton nach dem Umbau nicht mehr auseinander. Bei
+  gleichmäßiger Bildrate bleibt die exakte Bildrate erhalten.
+- **Wiederhergestellte Jobs** werden wieder nach den Regeln ihres eigenen
+  Profils aufgebaut — vorher galt das gerade aktive Profil, und die Datei
+  bekam andere Spuren, als ihr Profilname versprach. Eine Ausgabe ohne
+  Standard-Audiospur ist ausgeschlossen.
+- **Die Warteschlange bleibt erhalten,** auch wenn Spurwerk vor dem Ende
+  der Analyse beendet wird. Dateien mit Scan-Fehler und Jobs auf einem
+  gerade nicht verbundenen Laufwerk (USB/NAS) bleiben samt Einstellungen
+  gespeichert; Protokoll bzw. Startansicht sagen es an, „Leeren" verwirft
+  sie. Ist mkvmerge neu eingerichtet, werden fehlgeschlagene Dateien
+  automatisch neu analysiert.
+- **Keine Ausgabe überschreibt mehr die Quelle eines anderen Jobs**
+  (z. B. „Film.mkv" und „Film_remux.mkv" im selben Ordner): Vor dem Start
+  nennt eine Meldung beide Dateien, im Lauf wird der Job übersprungen.
+- **Drag & Drop** übernimmt Dateien und Ordner mit geschweiften Klammern
+  im Namen (Plex/Jellyfin: „Dune (2021) {imdb-tt1160419}.mkv"), statt sie
+  still zu verwerfen; Elemente ohne MKV meldet das Protokoll als
+  übersprungen. Lässt sich die Drag-&-Drop-Erweiterung nicht laden,
+  startet Spurwerk trotzdem (Dateien dann über die Buttons).
+- **Eine Tonspur „Director's Cut"** gilt nicht mehr als Kommentarspur und
+  wird nicht mehr verworfen.
+- **Fehler und Warnungen von mkvmerge/mkvextract** nennen im Protokoll
+  jetzt den echten Grund (bisher blieb der Text leer).
+- **Konvertierte Spuren** heißen nach ihrem echten Layout („AAC 5.1"
+  statt „AAC 7.1" bei einer 5.1-Quelle; eigene Namen bleiben), Mono bleibt
+  Mono, und die volle Sprachkennung (es-419, pt-BR) bleibt erhalten.
+- **Einstellungen (config.json)** werden atomar gespeichert, die vorige
+  gute Fassung bleibt als config.json.bak. Eine beschädigte Datei
+  verhindert den Start nicht mehr und wird als config.json.defekt-…
+  beiseitegelegt statt still überschrieben; eine config.json aus einer
+  neueren Version setzt nicht mehr alle Profile zurück.
+- **Titel-Bereinigung:** Eine Zahl im Titel gilt nicht mehr als
+  Erscheinungsjahr („Blade Runner 2049", „Wonder Woman 1984"), „Film.2025.mkv"
+  wird erkannt, keine offene Klammer mehr. TMDb übernimmt ohne Jahres-
+  treffer nur noch einen passenden Titel (auch mit Akzenten und „&"), und
+  ein vertippter eigener API-Key wird durch den eingebauten ersetzt — mit
+  Hinweis im Protokoll.
+- **Kleinere Bedienfehler:** Klick auf eine noch analysierende Datei
+  bearbeitet jetzt diese Datei; F5 übernimmt einen gerade getippten
+  Spurnamen; ein Start direkt nach einem Lauf wiederholt die fertigen
+  Dateien nicht; „Dateinamen bereinigen" bei schon sauberem Namen scheitert
+  nicht mehr an „identisch mit der Quelle"; eine Störung bei der Analyse
+  lässt keine Datei mehr auf „wird analysiert …" hängen; lassen sich
+  Einstellungen nicht speichern (schreibgeschützter Ordner), sagt das
+  Protokoll es einmalig.
+- **Beim Start springt das Fenster nicht mehr** — kein leeres
+  Mini-Fenster vorab, die dunkle Titelleiste bleibt.
+- Der TMDb-Titelabgleich läuft erst nach der Analyse und bremst bei
+  langsamem Netz keine weiteren Scans mehr.
 
 ### Entwicklung
 - `tests/smoke_ui.py` leitet die Konfiguration in einen Temp-Ordner um —
   der Sichtcheck überschrieb bisher die echte `config.json`.
+- **build.ps1** meldet „Build fertig" nur nach einem echten Neubau (bricht
+  bei fehlender .venv, falschem Python oder Fehlern ab und prüft die
+  EXE-Version), verträgt Vorabversionen wie „2.1.0-rc1" und sagt beim
+  TMDb-Key die Wahrheit; `.\build.ps1 -OhneKey` baut ohne eingebauten Key.
+- **Reproduzierbarer Build:** Abhängigkeiten mit Obergrenzen (ttkbootstrap
+  1.x, tkinterdnd2 0.6.x, Pillow ≤ 12), PyInstaller 6.22.3 gepinnt;
+  DEVELOPMENT.md nennt Python 3.14 (64 bit, nicht 3.14t).
+- EXE gut 4 MB kleiner (ungenutzte Pillow-Codecs raus, UPX aus); jedes
+  Release enthält THIRD_PARTY_LICENSES.txt mit den Lizenzhinweisen aller
+  eingebetteten Komponenten.
+- 363 automatisierte Tests (vorher 123), die Oberflächen-Tests
+  eingeschlossen.
 
 ## [2.0.0] — 2026-07-06
 

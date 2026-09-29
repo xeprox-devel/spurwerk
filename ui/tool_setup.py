@@ -393,8 +393,12 @@ class ToolManagerDialog(ttk.Toplevel):
                     stale = [exe for exe in toolchain.KIND_EXES[kind]
                              if self.cfg.tools.get(exe)]
                     if stale:
-                        for exe in stale:
-                            self.cfg.tools.pop(exe, None)
+                        # neues Dict statt pop(): der Tk-Thread kann cfg.tools
+                        # gerade für config.json durchlaufen — eine einzelne
+                        # Zuweisung ist atomar, ein pop() mittendrin nicht
+                        self.cfg.tools = {k: v for k, v in
+                                          self.cfg.tools.items()
+                                          if k not in stale}
                         try:
                             appconfig.save(self.cfg)
                         except OSError:
