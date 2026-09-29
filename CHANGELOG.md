@@ -6,6 +6,8 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-09-29
+
 ### Behoben
 - **Spurtabelle verschwand bei knapper Fensterhöhe** (z. B. Laptop mit
   1366×768, Protokoll offen, Audio-Konvertierung sichtbar). Die Höhe wird
