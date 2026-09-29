@@ -49,6 +49,15 @@ class Track:
     default: bool
     forced: bool
     minimum_timestamp_ns: int | None = None   # Startversatz (A/V-Sync!)
+    # Vollständiger IETF-Tag der Quelle („es-419“, „pt-BR“) — nur zum
+    # Schreiben; Regeln vergleichen immer den normalisierten `lang`.
+    lang_tag: str = ""
+
+    @property
+    def language_tag(self) -> str:
+        """Sprache für `--language` einer neu erzeugten Spur: der volle
+        Quell-Tag (Region/Schrift bleiben erhalten), sonst `lang`."""
+        return self.lang_tag or self.lang
 
     @property
     def is_multichannel(self) -> bool:
@@ -96,6 +105,11 @@ class TrackDecision:
     origin: Origin = Origin.RULE
 
 
+# Kanalzahl → Layout-Name (FFmpegs Standard-Layout zu `-ac N`)
+_LAYOUTS = {1: "1.0", 2: "2.0", 3: "3.0", 4: "4.0", 5: "5.0", 6: "5.1",
+            7: "6.1", 8: "7.1"}
+
+
 @dataclass
 class StereoSettings:
     """Konvertierungs-Einstellungen — gelten global für alle
@@ -108,19 +122,38 @@ class StereoSettings:
     downmix_preset: str = "loro"     # loro | pro | lfeboost | passthrough (nur Ziel 2.0)
     track_name: str = "Stereo AC3"
 
-    def suggested_track_name(self) -> str:
+    def suggested_track_name(self, channels: int | None = None) -> str:
+        """Namensvorschlag nach dem Ziel-Layout — oder, mit `channels`
+        (effektive Kanalzahl einer Spur), nach dem ECHTEN Layout."""
         from .presets import OUTPUT_CODECS
         short = OUTPUT_CODECS[self.codec]["short"]
-        return (f"Stereo {short}" if self.channels == "2.0"
-                else f"{short} {self.channels}")
+        layout = self._layout(channels)
+        if layout == "1.0":
+            return f"Mono {short}"
+        return f"Stereo {short}" if layout == "2.0" else f"{short} {layout}"
 
     def display_track_name(self) -> str:
         return self.track_name or self.suggested_track_name()
 
-    def short_label(self) -> str:
-        """Kompakte Beschreibung, z. B. „E-AC3 5.1“ — für Tabelle & Vorschau."""
+    def track_name_for(self, channels: int) -> str:
+        """Spurname einer konvertierten Spur mit `channels` echten Kanälen:
+        ein eigener Name des Nutzers bleibt, der Vorschlag folgt dagegen dem
+        effektiven Layout (5.1-Quelle + Ziel 7.1 → „AAC 5.1“, nie „AAC 7.1“)."""
+        own = self.track_name.strip()
+        if own and own != self.suggested_track_name():
+            return own
+        return self.suggested_track_name(channels)
+
+    def short_label(self, channels: int | None = None) -> str:
+        """Kompakte Beschreibung, z. B. „E-AC3 5.1“ — für Tabelle & Vorschau;
+        mit `channels` das effektive statt des Ziel-Layouts."""
         from .presets import OUTPUT_CODECS
-        return f"{OUTPUT_CODECS[self.codec]['short']} {self.channels}"
+        return f"{OUTPUT_CODECS[self.codec]['short']} {self._layout(channels)}"
+
+    def _layout(self, channels: int | None) -> str:
+        if channels is None:
+            return self.channels
+        return _LAYOUTS.get(channels, f"{channels}ch")
 
 
 @dataclass

@@ -95,8 +95,9 @@ def build_ffmpeg_downmix(ffmpeg: str, plan: FilePlan, track: Track,
         if track.is_multichannel and pan_filter:
             cmd += ["-af", pan_filter]
         else:
-            # Quelle ist bereits <=2 Kanäle oder Passthrough-Preset
-            cmd += ["-ac", "2"]
+            # Quelle ist bereits <=2 Kanäle oder Passthrough-Preset —
+            # Mono bleibt Mono (nie Upmix)
+            cmd += ["-ac", str(target)]
     else:
         # Mehrkanal-Ziel (z. B. DTS 5.1 → DD 5.1, E-AC3 7.1 → 5.1):
         # FFmpeg mischt mit Standard-Koeffizienten aufs Ziel-Layout
@@ -108,13 +109,19 @@ def build_ffmpeg_downmix(ffmpeg: str, plan: FilePlan, track: Track,
 
 def build_mkvmerge_mux(mkvmerge: str, plan: FilePlan, settings: StereoSettings,
                        stereo_files: dict[int, str],
-                       video_file: str | None = None) -> list[str]:
+                       video_file: str | None = None,
+                       video_timestamps: str | None = None,
+                       video_sync_ms: int | None = None) -> list[str]:
     """Der eine finale Mux-Lauf: Quelle (mit Spurauswahl) + n Stereo-Dateien.
 
     `stereo_files` bildet Quell-Track-ID → Pfad der erzeugten Stereo-Datei ab.
     `video_file` (DV/HDR-Remux): ersetzt die Videospur der Quelle durch den
     bereinigten HEVC-Stream — die Quelle liefert dann nur noch Audio/Subs/
     Kapitel (--no-video), das Video kommt als eigene Eingabedatei davor.
+    Das rohe HEVC trägt keine Zeitstempel mehr; das Quell-Timing kommt über
+    `video_timestamps` (exakte Zeitstempel-Datei bei Lücken/VFR) oder über
+    Bildrate + `video_sync_ms` (Startversatz; ohne Angabe der gescannte
+    Versatz der Quell-Videospur).
     """
     media = plan.media
     cmd = [mkvmerge, "--gui-mode", "-o", plan.output_path]
@@ -126,15 +133,25 @@ def build_mkvmerge_mux(mkvmerge: str, plan: FilePlan, settings: StereoSettings,
         first_video = next(iter(media.by_type("video")), None)
         if first_video is not None:
             if first_video.lang != "und":
-                cmd += ["--language", f"0:{first_video.lang}"]
+                cmd += ["--language", f"0:{first_video.language_tag}"]
             if first_video.name:
                 cmd += ["--track-name", f"0:{first_video.name}"]
-        # Timing-Absicherung: dem roh extrahierten HEVC die exakte
-        # Quell-Bildrate mitgeben, damit mkvmerge sie nicht raten muss.
-        frame_rate = getattr(plan.dv, "frame_rate", "") if plan.dv else ""
-        duration = default_duration_arg(frame_rate)
-        if duration:
-            cmd += ["--default-duration", f"0:{duration}"]
+        if video_timestamps:
+            # Lücken/VFR: jeder Frame bekommt seinen exakten Quell-Zeitstempel
+            cmd += ["--timestamps", f"0:{video_timestamps}"]
+        else:
+            # Timing-Absicherung: dem roh extrahierten HEVC die exakte
+            # Quell-Bildrate mitgeben, damit mkvmerge sie nicht raten muss …
+            frame_rate = getattr(plan.dv, "frame_rate", "") if plan.dv else ""
+            duration = default_duration_arg(frame_rate)
+            if duration:
+                cmd += ["--default-duration", f"0:{duration}"]
+            # … und den Startversatz der Quelle (sonst läuft das Bild dem
+            # Ton um genau diesen Versatz voraus)
+            if video_sync_ms is None and first_video is not None:
+                video_sync_ms = first_video.delay_ms
+            if video_sync_ms:
+                cmd += ["--sync", f"0:{video_sync_ms}"]
         cmd += ["--default-track-flag", "0:yes", video_file]
 
     # ── Spurauswahl der Quelldatei ────────────────────────────────────────
@@ -170,8 +187,9 @@ def build_mkvmerge_mux(mkvmerge: str, plan: FilePlan, settings: StereoSettings,
     for track in stereo_tracks:
         is_default = (plan.default_audio_is_stereo
                       and track.id == plan.default_audio_source)
-        cmd += ["--language", f"0:{track.lang}",
-                "--track-name", f"0:{settings.display_track_name()}",
+        channels = effective_channels(track, settings)
+        cmd += ["--language", f"0:{track.language_tag}",
+                "--track-name", f"0:{settings.track_name_for(channels)}",
                 "--default-track-flag", f"0:{'yes' if is_default else 'no'}"]
         if track.delay_ms:
             cmd += ["--sync", f"0:{track.delay_ms}"]

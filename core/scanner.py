@@ -19,14 +19,20 @@ class ScanError(Exception):
 def scan_file(mkvmerge: str, path: str, timeout: float = 60.0) -> MediaInfo:
     """Analysiert eine Datei; wirft ScanError mit verständlicher Meldung."""
     try:
+        # errors="replace": ein kaputtes Byte darf den Scan nie abbrechen
         result = subprocess.run(
             [mkvmerge, "-J", path],
             capture_output=True, text=True, encoding="utf-8",
-            creationflags=_CREATE_NO_WINDOW, timeout=timeout)
+            errors="replace", creationflags=_CREATE_NO_WINDOW,
+            timeout=timeout)
     except FileNotFoundError as exc:
         raise ScanError(f"mkvmerge nicht gefunden: {mkvmerge}") from exc
     except subprocess.TimeoutExpired as exc:
         raise ScanError("Analyse-Timeout — Datei nicht lesbar?") from exc
+    except OSError as exc:
+        # z. B. Zugriff verweigert, beschädigte/gesperrte oder unpassende
+        # mkvmerge.exe — der Scan-Thread kennt nur ScanError
+        raise ScanError(f"mkvmerge lässt sich nicht starten: {exc}") from exc
 
     try:
         data = json.loads(result.stdout)
@@ -45,6 +51,7 @@ def parse_mkvmerge_json(data: dict, path: str) -> MediaInfo:
     tracks = []
     for t in data.get("tracks", []):
         props = t.get("properties", {})
+        ietf = props.get("language_ietf") or ""
         tracks.append(Track(
             id=t["id"],
             type=t["type"],
@@ -56,6 +63,7 @@ def parse_mkvmerge_json(data: dict, path: str) -> MediaInfo:
             default=bool(props.get("default_track")),
             forced=bool(props.get("forced_track")),
             minimum_timestamp_ns=props.get("minimum_timestamp"),
+            lang_tag=ietf if ietf != "und" else "",
         ))
 
     container_props = data.get("container", {}).get("properties", {})

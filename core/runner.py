@@ -27,11 +27,16 @@ from pathlib import Path
 
 from . import dv
 from .commands import (build_ffmpeg_downmix, build_mkvmerge_mux,
-                       stereo_temp_name, subtitle_automation_note)
+                       effective_channels, stereo_temp_name,
+                       subtitle_automation_note)
 from .model import FilePlan, FileStatus
 
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _GUI_PROGRESS_RE = re.compile(r"#GUI#progress (\d+)%")
+# Meldungen von mkvmerge/mkvextract: im --gui-mode landen sie auf STDOUT
+# („#GUI#error …“), stderr bleibt leer. Ohne --gui-mode: „Error: …“.
+_GUI_MESSAGE_RE = re.compile(
+    r"^(?:#GUI#(error|warning)|(Error|Warning):)\s*(?:\(mkv\w+\)\s*)?(.*)$")
 
 
 class JobError(Exception):
@@ -90,20 +95,39 @@ class JobRunner:
         return success
 
     def _mark_output_collisions(self, plans: list[FilePlan]) -> None:
-        """Zwei Quelldateien mit demselben Ausgabepfad: nur die erste läuft."""
+        """Zwei Quelldateien mit demselben Ausgabepfad: nur die erste läuft.
+        Und keine Ausgabe darf die QUELLE eines anderen Jobs überschreiben —
+        dessen Original wäre sonst weg, bevor er überhaupt läuft."""
+        sources = {_path_key(p.media.path): p.media.path for p in plans}
+        source_ids = {fid: p.media.path for p in plans
+                      if (fid := _file_id(p.media.path))}
         seen: dict[str, str] = {}
         for plan in plans:
-            key = os.path.normcase(os.path.abspath(plan.output_path))
-            if key in seen:
-                plan.status = FileStatus.ERROR
+            key = _path_key(plan.output_path)
+            own_key = _path_key(plan.media.path)
+            own_id = _file_id(plan.media.path)
+            out_id = _file_id(plan.output_path)
+            victim = None
+            if key in sources and key != own_key:
+                victim = sources[key]
+            elif out_id and out_id in source_ids and out_id != own_id:
+                victim = source_ids[out_id]   # anders geschrieben, gleiche Datei
+            if victim is not None:
+                plan.error = (f"Ausgabe würde die Quelldatei "
+                              f"{Path(victim).name} aus der Warteschlange "
+                              f"überschreiben — bitte Ausgabename oder "
+                              f"-ordner ändern.")
+            elif key in seen:
                 plan.error = (f"Ausgabepfad kollidiert mit "
                               f"{Path(seen[key]).name} — bitte Ausgabename "
                               f"oder -ordner ändern.")
-                self.q.put(("LOG",
-                            f"Übersprungen: {Path(plan.media.path).name} — "
-                            f"{plan.error}", "error"))
             else:
                 seen[key] = plan.media.path
+                continue
+            plan.status = FileStatus.ERROR
+            self.q.put(("LOG",
+                        f"Übersprungen: {Path(plan.media.path).name} — "
+                        f"{plan.error}", "error"))
 
     def terminate_active(self) -> None:
         """Bricht den gerade laufenden Unterprozess ab (Cancel-Pfad der UI)."""
@@ -143,10 +167,12 @@ class JobRunner:
             steps = dv_steps + len(stereo_tracks) + 1
             stereo_files: dict[int, str] = {}
             video_file: str | None = None
+            video_timing: dict = {}
 
             if is_dv:
                 temp_dir = tempfile.mkdtemp(prefix="spurwerk-")
-                video_file = self._dv_process(plan, temp_dir, steps)
+                video_file, video_timing = self._dv_process(
+                    plan, temp_dir, steps)
 
             if stereo_tracks:
                 temp_dir = temp_dir or tempfile.mkdtemp(prefix="spurwerk-")
@@ -155,11 +181,12 @@ class JobRunner:
                     out = str(Path(temp_dir) / stereo_temp_name(track, settings))
                     # Tag "new": die Zeile erzeugt eine NEUE Spur — Cyan,
                     # dieselbe Semantik wie das Plus in der Spurtabelle.
+                    label = settings.short_label(
+                        effective_channels(track, settings))
                     self.q.put(("LOG",
                                 f"  [{i + 1}/{steps}] Konvertiere Spur "
                                 f"{track.id} ({track.lang}, "
-                                f"{track.channels}ch) → "
-                                f"{settings.short_label()} "
+                                f"{track.channels}ch) → {label} "
                                 f"{settings.bitrate} …", "new"))
                     cmd = build_ffmpeg_downmix(
                         self.tools["ffmpeg"], plan, track, settings, out)
@@ -179,7 +206,7 @@ class JobRunner:
             slice_start = (steps - 1) * 100 // steps
             mux_cmd = build_mkvmerge_mux(
                 self.tools["mkvmerge"], plan, settings, stereo_files,
-                video_file=video_file)
+                video_file=video_file, **video_timing)
             self._run_mkvmerge(mux_cmd, slice_start=slice_start,
                                slice_end=100)
             # Abbruch mitten im Mux hinterlässt eine abgeschnittene Datei —
@@ -210,15 +237,21 @@ class JobRunner:
             if temp_dir:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def _dv_process(self, plan: FilePlan, temp_dir: str, steps: int) -> str:
+    def _dv_process(self, plan: FilePlan, temp_dir: str,
+                    steps: int) -> tuple[str, dict]:
         """Modus „hdr10“: HEVC extrahieren, dann die Dolby-Vision-Daten
         (RPU + EL) per dovi_tool entfernen — übrig bleibt reines HDR10.
-        Der Base-Layer (das Bild) wird bitgenau weitergereicht."""
+        Der Base-Layer (das Bild) wird bitgenau weitergereicht.
+
+        Rückgabe: (bereinigtes HEVC, Timing-Argumente für den Mux) — das
+        rohe HEVC trägt keine Zeitstempel, das Quell-Timing muss mit."""
         if not self.tools.get("dovi_tool"):
             raise JobError("dovi_tool fehlt — bitte über das ⚙-Symbol "
                            "herunterladen oder den Pfad wählen.")
         raw = str(Path(temp_dir) / "video_dv.hevc")
         out = str(Path(temp_dir) / "video_out.hevc")
+        timestamps = str(Path(temp_dir) / "video_ts.txt")
+        timing: dict = {}   # ffmpeg-Weg: der Mux nimmt den gescannten Versatz
 
         # mkvextract (liegt neben mkvmerge) bevorzugen — bewahrt die exakte
         # Stream-Struktur für wählerische Hardware-Decoder; ffmpeg als Fallback
@@ -230,8 +263,10 @@ class JobRunner:
                                f"mkvextract (bitgenau) …", "step"))
             self._run_mkvmerge(
                 dv.build_extract_hevc_mkvextract(
-                    mkvextract, plan.media.path, video_tracks[0].id, raw),
+                    mkvextract, plan.media.path, video_tracks[0].id, raw,
+                    out_timestamps=timestamps),
                 slice_start=0, slice_end=end, tool="mkvextract")
+            timing = self._video_timing(plan, timestamps)
         else:
             self.q.put(("LOG", f"  [1/{steps}] Extrahiere HEVC-Stream "
                                f"(bitgenau, kein Encoding) …", "step"))
@@ -257,7 +292,25 @@ class JobRunner:
             raise JobError("dovi_tool hat keine Ausgabedatei erzeugt.")
         Path(raw).unlink(missing_ok=True)   # Peak-Speicher senken
         self.q.put(("PROGRESS_FILE", 2 * 100 // steps))
-        return out
+        return out, timing
+
+    def _video_timing(self, plan: FilePlan, timestamps: str) -> dict:
+        """Quell-Timing fürs rohe HEVC: lückenloses CFR → Bildrate +
+        Startversatz (die exakte Bildrate bleibt im Header), sonst die
+        exakten Zeitstempel (Lücken/VFR)."""
+        if self.cancel.is_set():
+            raise _Cancelled()
+        try:
+            values = dv.parse_timestamps_v2(
+                Path(timestamps).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise JobError(f"Zeitstempel der Videospur nicht lesbar: "
+                           f"{exc}") from exc
+        frame_rate = getattr(plan.dv, "frame_rate", "") if plan.dv else ""
+        offset = dv.constant_rate_offset(values, frame_rate)
+        if offset is None:
+            return {"video_timestamps": timestamps}
+        return {"video_sync_ms": offset}
 
     def _mkvextract_path(self) -> str | None:
         """mkvextract liegt neben mkvmerge — für die bitgenaue
@@ -322,23 +375,34 @@ class JobRunner:
                       tool: str = "mkvmerge") -> None:
         """Für mkvmerge UND mkvextract — beide melden #GUI#progress und
         nutzen 0=ok, 1=Warnung, >=2=Fehler."""
+        errors: list[str] = []
+        warnings: list[str] = []
+
         def on_line(line: str) -> None:
             m = _GUI_PROGRESS_RE.search(line)
             if m:
                 frac = int(m.group(1)) / 100
                 self.q.put(("PROGRESS_FILE",
                             slice_start + int(frac * (slice_end - slice_start))))
+                return
+            msg = _GUI_MESSAGE_RE.match(line)
+            if msg and msg.group(3).strip():
+                kind = (msg.group(1) or msg.group(2)).lower()
+                (errors if kind == "error" else warnings).append(
+                    msg.group(3).strip())
 
         returncode, stderr = self._stream_process(cmd, progress_cb=on_line)
         if self.cancel.is_set():
             return
         if returncode == 1:
-            self.q.put(("LOG",
-                        f"  ⚠ {tool}-Warnung: {stderr[-300:].strip()}",
-                        "warn"))
+            detail = "; ".join(warnings)[-300:] or stderr[-300:].strip()
+            self.q.put(("LOG", f"  ⚠ {tool}-Warnung"
+                        + (f": {detail}" if detail else ""), "warn"))
         elif returncode != 0:   # >=2 = Fehler, negativ = per Signal beendet
-            raise JobError(
-                f"{tool}-Fehler (Exit {returncode}): {stderr[-600:].strip()}")
+            detail = ("; ".join(errors or warnings)[-600:]
+                      or stderr[-600:].strip())
+            raise JobError(f"{tool}-Fehler (Exit {returncode})"
+                           + (f": {detail}" if detail else ""))
 
     def _stream_process(self, cmd: list[str], progress_cb) -> tuple[int, str]:
         """Startet den Prozess, streamt stdout an progress_cb und liefert
@@ -409,3 +473,18 @@ class JobRunner:
 
 class _Cancelled(Exception):
     pass
+
+
+def _path_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _file_id(path: str) -> tuple[int, int] | None:
+    """Datei-Identität (Laufwerk, Index) wie bei samefile — erkennt dieselbe
+    Datei auch unter anderer Schreibweise (Kurzname, Laufwerksbuchstabe
+    statt UNC). None, wenn sie (noch) nicht existiert."""
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino) if st.st_ino else None

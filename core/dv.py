@@ -146,17 +146,58 @@ def default_duration_arg(frame_rate: str) -> str | None:
     return f"{num}/{den}fps"
 
 
+def parse_timestamps_v2(text: str) -> list[float]:
+    """Liest eine Zeitstempel-Datei „timestamp format v2“ (mkvextract
+    timestamps_v2): ein Wert in ms pro Frame, sortiert zurückgegeben."""
+    values = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            values.append(float(line))
+    return sorted(values)
+
+
+def constant_rate_offset(timestamps: list[float],
+                         frame_rate: str) -> int | None:
+    """Startversatz (ms), wenn die Quell-Zeitstempel lückenlos im Raster der
+    bekannten Standard-Bildrate liegen — dann genügen beim DV-Remux
+    `--default-duration` + `--sync`, und die exakte Bildrate bleibt im
+    Header (eine Zeitstempel-Datei würde sie auf ganze ms runden: 42 ms
+    statt 41,708 ms → Player melden 23,81 statt 23,976 fps).
+
+    None bei Lücken, VFR, unbekannter Bildrate oder leerer Liste — dann
+    braucht der Mux die exakten Zeitstempel. Toleranz 1 ms: Matroska
+    speichert Zeitstempel üblicherweise auf ganze ms gerundet.
+    """
+    if not timestamps or default_duration_arg(frame_rate) is None:
+        return None
+    num, _, den = frame_rate.partition("/")
+    frame_ms = 1000 * int(den) / int(num)
+    start = timestamps[0]
+    if any(abs(ts - (start + i * frame_ms)) > 1.0 + 1e-6
+           for i, ts in enumerate(timestamps)):
+        return None
+    return round(start)
+
+
 # ── Pipeline-Kommandos (reine Builder, vom Runner ausgeführt) ────────────
 
 
 def build_extract_hevc_mkvextract(mkvextract: str, src: str, track_id: int,
-                                  out_hevc: str) -> list[str]:
+                                  out_hevc: str,
+                                  out_timestamps: str | None = None
+                                  ) -> list[str]:
     """HEVC bitgenau via mkvextract ziehen — der native MKVToolNix-Round-Trip
     (mkvextract → mkvmerge) bewahrt die exakte NAL-/Parameter-Set-Struktur.
     Genau das brauchen wählerische Hardware-Decoder (Rockchip/ARM-Boxen),
-    denen ffmpegs umgeschriebener Bitstream nicht schmeckt."""
-    return [mkvextract, "tracks", src, "--gui-mode",
-            f"{track_id}:{out_hevc}"]
+    denen ffmpegs umgeschriebener Bitstream nicht schmeckt.
+
+    `out_timestamps`: im selben Lauf die Quell-Zeitstempel der Spur sichern
+    (timestamps_v2) — das rohe HEVC verliert Startversatz, Lücken und VFR."""
+    cmd = [mkvextract, "--gui-mode", src, "tracks", f"{track_id}:{out_hevc}"]
+    if out_timestamps:
+        cmd += ["timestamps_v2", f"{track_id}:{out_timestamps}"]
+    return cmd
 
 
 def build_extract_hevc(ffmpeg: str, src: str, out_hevc: str) -> list[str]:
