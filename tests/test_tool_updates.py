@@ -254,7 +254,41 @@ class TestDoviToolPruefsumme:
         assert seen["url"] == (
             "https://github.com/quietvoid/dovi_tool/releases/download/"
             "2.3.4/dovi_tool-2.3.4-x86_64-pc-windows-msvc.zip")
-        assert any("ohne Prüfsumme" in s for s in steps)   # ehrlich angesagt
+        assert any("Release-Link" in s for s in steps)
+        # Release-Seite auch nicht erreichbar → ohne Digest, ehrlich markiert
+        assert result.verified is False
+
+    def test_ersatzweg_holt_digest_von_der_release_seite(self, monkeypatch,
+                                                         tmp_path):
+        payload = self._zip_bytes()
+        good = hashlib.sha256(payload).hexdigest()
+        name = "dovi_tool-2.3.4-x86_64-pc-windows-msvc.zip"
+        # Auszug der echten Seite (29.09.2026): Nachbardatei davor, damit
+        # der Regex nachweislich den Digest DIESES Assets nimmt
+        page = (f'<button aria-label="Copy to clipboard digest for '
+                f'libdovi-3.4.0-x86_64-pc-windows-msvc.zip" type="button" '
+                f'value="sha256:{"1" * 64}"></button>'
+                f'<button aria-label="Copy to clipboard digest for {name}" '
+                f'type="button" value="sha256:{good}" class="Button">')
+        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
+
+        def fake_get_bytes(url, timeout=None):
+            if "api.github.com" in url:
+                raise OSError("HTTP Error 403: rate limit exceeded")
+            assert url.endswith("/expanded_assets/2.3.4")
+            return page.encode()
+        monkeypatch.setattr(downloader, "_get_bytes", fake_get_bytes)
+        monkeypatch.setattr(
+            downloader, "_final_url", lambda url, timeout=None:
+            "https://github.com/quietvoid/dovi_tool/releases/tag/2.3.4")
+
+        def fake_download(url, dest, progress, label, cancel):
+            dest.write_bytes(payload)
+            return good
+        monkeypatch.setattr(downloader, "_download", fake_download)
+        result = downloader.download_dovi_tool(
+            tmp_path, lambda *_: None, threading.Event())
+        assert result.verified is True
 
     def test_asset_sha256_parser(self):
         good = "a" * 64
@@ -306,7 +340,7 @@ class TestNachbesserungen:
         def in_use(self, target):   # Ziel-EXE läuft gerade
             raise PermissionError("in Benutzung")
         monkeypatch.setattr(downloader.Path, "replace", in_use)
-        with pytest.raises(downloader.DownloadError, match="verwendet"):
+        with pytest.raises(downloader.DownloadError, match="Austausch"):
             downloader._extract_members(
                 archive, {"bin/ffmpeg.exe": "ffmpeg.exe"}, tmp_path,
                 lambda *_: None)
@@ -333,6 +367,105 @@ class TestNachbesserungen:
             tmp_path, lambda *_: None, threading.Event())
         assert result.verified is False
         assert (tmp_path / "ffprobe.exe").exists()
+
+    @staticmethod
+    def _ffmpeg_zip(tag: bytes) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("x/bin/ffmpeg.exe", b"ffmpeg " + tag)
+            zf.writestr("x/bin/ffprobe.exe", b"ffprobe " + tag)
+        return buf.getvalue()
+
+    def test_paket_wird_ganz_oder_gar_nicht_getauscht(self, monkeypatch,
+                                                     tmp_path):
+        (tmp_path / "ffmpeg.exe").write_bytes(b"ffmpeg alt")
+        (tmp_path / "ffprobe.exe").write_bytes(b"ffprobe alt")
+        archive = tmp_path / "neu.zip"
+        archive.write_bytes(self._ffmpeg_zip(b"neu"))
+        real_replace = downloader.Path.replace
+
+        def fail_on_ffprobe(self, target):
+            # zweiter Austausch scheitert (Platte voll, Virenscanner …)
+            if self.name == "ffprobe.part":
+                raise OSError("Datenträger voll")
+            return real_replace(self, target)
+        monkeypatch.setattr(downloader.Path, "replace", fail_on_ffprobe)
+        with pytest.raises(downloader.DownloadError, match="bleibt"):
+            downloader._extract_members(
+                archive, {"bin/ffmpeg.exe": "ffmpeg.exe",
+                          "bin/ffprobe.exe": "ffprobe.exe"},
+                tmp_path, lambda *_: None)
+        # beide wieder alt — kein neues ffmpeg neben altem ffprobe
+        assert (tmp_path / "ffmpeg.exe").read_bytes() == b"ffmpeg alt"
+        assert (tmp_path / "ffprobe.exe").read_bytes() == b"ffprobe alt"
+        assert not list(tmp_path.glob("*.part"))
+
+    def test_austausch_klappt_und_raeumt_auf(self, tmp_path):
+        (tmp_path / "ffmpeg.exe").write_bytes(b"ffmpeg alt")
+        (tmp_path / "ffprobe.exe").write_bytes(b"ffprobe alt")
+        (tmp_path / "ffmpeg.old").write_bytes(b"rest vom letzten Mal")
+        archive = tmp_path / "neu.zip"
+        archive.write_bytes(self._ffmpeg_zip(b"neu"))
+        downloader._extract_members(
+            archive, {"bin/ffmpeg.exe": "ffmpeg.exe",
+                      "bin/ffprobe.exe": "ffprobe.exe"},
+            tmp_path, lambda *_: None)
+        assert (tmp_path / "ffmpeg.exe").read_bytes() == b"ffmpeg neu"
+        assert (tmp_path / "ffprobe.exe").read_bytes() == b"ffprobe neu"
+        assert not list(tmp_path.glob("*.old*"))
+        assert not list(tmp_path.glob("*.part"))
+
+    def _gyan_setup(self, monkeypatch, gyan_error: Exception):
+        monkeypatch.setattr(downloader, "os_is_64bit", lambda: True)
+        monkeypatch.setattr(downloader, "_gyan_version", lambda: "9.0.2")
+        btbn = self._ffmpeg_zip(b"btbn-master")
+        calls = []
+
+        def fake_from(url, sums_url, version, tools_dir, progress, cancel,
+                      **_kw):
+            calls.append(url)
+            if url == downloader.GYAN_ZIP:
+                raise gyan_error
+            (tools_dir / "ffmpeg.exe").write_bytes(btbn)
+            return downloader.DownloadResult("ffmpeg", version, [])
+        monkeypatch.setattr(downloader, "_ffmpeg_from", fake_from)
+        return calls
+
+    def test_update_weicht_nie_auf_entwicklungs_build_aus(self, monkeypatch,
+                                                         tmp_path):
+        (tmp_path / "ffmpeg.exe").write_bytes(b"ffmpeg 8.1")   # Update-Fall
+        calls = self._gyan_setup(
+            monkeypatch, downloader.SourceUnreachable("Zeitüberschreitung"))
+        with pytest.raises(downloader.DownloadError):
+            downloader.download_ffmpeg(tmp_path, lambda *_: None,
+                                       threading.Event())
+        assert calls == [downloader.GYAN_ZIP]
+        assert (tmp_path / "ffmpeg.exe").read_bytes() == b"ffmpeg 8.1"
+
+    def test_pruefsummenfehler_wird_nie_umgangen(self, monkeypatch,
+                                                  tmp_path):
+        calls = self._gyan_setup(monkeypatch, downloader.DownloadError(
+            "SHA-256-Prüfung fehlgeschlagen"))
+        with pytest.raises(downloader.DownloadError, match="SHA-256"):
+            downloader.download_ffmpeg(tmp_path, lambda *_: None,
+                                       threading.Event())
+        assert calls == [downloader.GYAN_ZIP]   # kein BtbN-Ausweichen
+
+    def test_ersteinrichtung_darf_ausweichen(self, monkeypatch, tmp_path):
+        calls = self._gyan_setup(
+            monkeypatch, downloader.SourceUnreachable("gyan.dev offline"))
+        downloader.download_ffmpeg(tmp_path, lambda *_: None,
+                                   threading.Event())
+        assert len(calls) == 2 and "BtbN" in calls[1]
+
+    def test_haertung_versionen_und_namen(self):
+        with pytest.raises(ValueError):
+            downloader._release_number("2.3.²")      # isdigit, aber kein ASCII
+        with pytest.raises(ValueError):
+            downloader._release_number("../../1.0")
+        # BtbN-Release-Build ist vergleichbar, der Master-Snapshot nicht
+        assert toolchain.comparable_version("n9.0.2") == (9, 0, 2)
+        assert toolchain.update_state("n8.0", "9.0.2") == OUTDATED
 
     def test_expect_hash_beide_formate(self):
         digest = "ab" * 32

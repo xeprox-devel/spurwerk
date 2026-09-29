@@ -1384,10 +1384,11 @@ class MainWindow(ttk.Frame):
         webbrowser.open(url)
 
     def _on_tool_latest(self, latest: dict[str, str | None]) -> None:
-        # Ein Totalausfall (offline) überschreibt kein bekanntes Ergebnis
-        if not any(latest.values()) and self.tool_latest:
-            return
-        self.tool_latest = latest
+        # Ausfälle (offline, eine Quelle gestört) überschreiben kein
+        # bekanntes Ergebnis — nur frische Werte kommen dazu
+        merged = dict(self.tool_latest or {})
+        merged.update({k: v for k, v in latest.items() if v})
+        self.tool_latest = merged
         self._update_tool_update_chip()
 
     def _update_tool_update_chip(self) -> None:

@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import threading
 import urllib.request
@@ -51,6 +52,8 @@ WIN32_BASE = ("https://github.com/sudo-nautilus/FFmpeg-Builds-Win32"
 DOVI_API = "https://api.github.com/repos/quietvoid/dovi_tool/releases/latest"
 DOVI_LATEST = "https://github.com/quietvoid/dovi_tool/releases/latest"
 DOVI_DOWNLOAD = "https://github.com/quietvoid/dovi_tool/releases/download"
+DOVI_EXPANDED = ("https://github.com/quietvoid/dovi_tool/releases"
+                 "/expanded_assets")
 
 DOWNLOAD_PAGES = {
     "mkvtoolnix": "https://mkvtoolnix.download/downloads.html",
@@ -61,6 +64,11 @@ DOWNLOAD_PAGES = {
 
 class DownloadError(Exception):
     pass
+
+
+class SourceUnreachable(DownloadError):
+    """Netz-/Serverproblem beim Laden — nur dann lohnt eine Ersatzquelle
+    (nie bei Prüfsummen-Fehlern oder belegten EXEs)."""
 
 
 # progress_cb(schritt_text, prozent 0..100 oder None für unbestimmt)
@@ -111,7 +119,9 @@ def _release_number(text: str) -> str:
     eine Fehlerseite oder ein Platzhalter darf nie als Version gelten."""
     text = text.strip().lstrip("vV")
     parts = text.split(".")
-    if len(parts) < 2 or not all(p.isdigit() for p in parts):
+    # isascii: „²“ oder arabisch-indische Ziffern sind isdigit(), aber keine
+    # Versionsnummer — und die Nummer landet in URLs und Dateinamen
+    if len(parts) < 2 or not all(p.isascii() and p.isdigit() for p in parts):
         raise ValueError(f"keine Versionsnummer: {text[:40]!r}")
     return text
 
@@ -139,7 +149,7 @@ def _download(url: str, dest: Path, progress: ProgressCb, label: str,
         part.replace(dest)
         return sha.hexdigest()
     except OSError as exc:
-        raise DownloadError(f"Download fehlgeschlagen: {exc}") from exc
+        raise SourceUnreachable(f"Download fehlgeschlagen: {exc}") from exc
     finally:
         part.unlink(missing_ok=True)
 
@@ -167,39 +177,82 @@ def _extract_members(archive: Path, wanted_suffixes: dict[str, str],
 
     wanted_suffixes: Member-Endung (lowercase, '/'-normalisiert) → Zieldatei.
     """
-    extracted: list[str] = []
+    parts: dict[Path, Path] = {}   # Ziel-EXE → fertig entpackte .part
     try:
-        with zipfile.ZipFile(archive) as zf:
-            for member in zf.namelist():
-                normalized = member.replace("\\", "/").lower()
-                for suffix, target_name in wanted_suffixes.items():
-                    if normalized.endswith(suffix):
-                        progress(f"Entpacke {target_name} …", None)
-                        target = tools_dir / target_name
-                        # erst .part schreiben, dann atomar ersetzen — nie
-                        # eine halbe EXE hinterlassen
-                        part = target.with_suffix(".part")
-                        try:
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                for member in zf.namelist():
+                    normalized = member.replace("\\", "/").lower()
+                    for suffix, target_name in wanted_suffixes.items():
+                        if normalized.endswith(suffix):
+                            progress(f"Entpacke {target_name} …", None)
+                            target = tools_dir / target_name
+                            # erst alles nach .part — ausgetauscht wird
+                            # erst, wenn das ganze Paket entpackt ist
+                            part = target.with_suffix(".part")
+                            parts[target] = part
                             with zf.open(member) as src, \
                                     open(part, "wb") as dst:
                                 shutil.copyfileobj(src, dst)
-                            part.replace(target)
-                        finally:
-                            # EXE in Benutzung, Platte voll, CRC-Fehler:
-                            # keine 100-MB-Reste in tools/ liegen lassen
-                            part.unlink(missing_ok=True)
-                        extracted.append(str(target))
-    except PermissionError as exc:
-        raise DownloadError(
-            "EXE wird gerade verwendet — bitte laufende Jobs beenden und "
-            "erneut versuchen.") from exc
-    except (OSError, zipfile.BadZipFile) as exc:
-        raise DownloadError(f"Entpacken fehlgeschlagen: {exc}") from exc
-    missing = set(wanted_suffixes.values()) - {Path(p).name for p in extracted}
-    if missing:
-        raise DownloadError(
-            f"Archiv unvollständig — nicht gefunden: {', '.join(missing)}")
-    return extracted
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise DownloadError(f"Entpacken fehlgeschlagen: {exc}") from exc
+        missing = set(wanted_suffixes.values()) - {t.name for t in parts}
+        if missing:
+            raise DownloadError(
+                f"Archiv unvollständig — nicht gefunden: {', '.join(missing)}")
+        _swap_in(parts)
+        return [str(target) for target in parts]
+    finally:
+        # Platte voll, CRC-Fehler, Rollback: keine 100-MB-Reste in tools/
+        for part in parts.values():
+            part.unlink(missing_ok=True)
+
+
+def _swap_in(parts: dict[Path, Path]) -> None:
+    """Tauscht ein Paket (z. B. ffmpeg + ffprobe) gemeinsam aus — ganz oder
+    gar nicht, nie ein neues ffmpeg neben einem alten ffprobe. Eine
+    laufende EXE lässt sich unter Windows nicht überschreiben, wohl aber
+    umbenennen: die alte Version wandert nach .old und verschwindet, sobald
+    sie frei ist (spätestens beim nächsten Update)."""
+    swapped: list[tuple[Path, Path | None]] = []
+    try:
+        for target, part in parts.items():
+            backup = None
+            if target.exists():
+                backup = _free_backup(target)
+                target.replace(backup)
+            swapped.append((target, backup))
+            part.replace(target)
+    except OSError as exc:
+        for target, backup in reversed(swapped):   # zurückrollen
+            try:
+                if backup is not None:
+                    backup.replace(target)
+                else:
+                    target.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise DownloadError(f"Austausch fehlgeschlagen — der bisherige "
+                            f"Stand bleibt erhalten: {exc}") from exc
+    for _, backup in swapped:
+        if backup is not None:
+            try:
+                backup.unlink()
+            except OSError:
+                pass   # alte Version läuft noch — nächstes Mal weg
+
+
+def _free_backup(target: Path) -> Path:
+    """Freier .old-Name; Reste früherer Updates werden dabei aufgeräumt."""
+    for n in range(10):
+        backup = target.with_suffix(f".old{n}" if n else ".old")
+        try:
+            backup.unlink(missing_ok=True)
+            return backup
+        except OSError:
+            continue   # diese alte Version läuft noch
+    raise PermissionError(f"{target.name}: zu viele alte Versionen in "
+                          f"Benutzung")
 
 
 # ── MKVToolNix ────────────────────────────────────────────────────────────
@@ -217,8 +270,9 @@ def download_mkvtoolnix(tools_dir: Path, progress: ProgressCb,
                         cancel: threading.Event) -> DownloadResult:
     progress("Ermittle aktuelle Version …", None)
     try:
-        version = mkvtoolnix_latest_version()
-    except (OSError, gzip.BadGzipFile, ET.ParseError) as exc:
+        # bereinigt: die Version landet in URL und Dateiname
+        version = _release_number(mkvtoolnix_latest_version())
+    except (OSError, gzip.BadGzipFile, ET.ParseError, ValueError) as exc:
         raise DownloadError(
             f"mkvtoolnix.download nicht erreichbar: {exc}") from exc
     arch = "64" if os_is_64bit() else "32"
@@ -261,8 +315,13 @@ def download_ffmpeg(tools_dir: Path, progress: ProgressCb,
         try:
             return _ffmpeg_from(GYAN_ZIP, f"{GYAN_ZIP}.sha256",
                                 _gyan_version(), tools_dir, progress, cancel)
-        except DownloadError as exc:
-            if cancel.is_set():
+        except SourceUnreachable as exc:
+            # Ersatzquelle nur, wenn gyan.dev nicht erreichbar ist — und nur
+            # beim Erst-Download: ein Update tauscht kein stabiles Release
+            # gegen einen Entwicklungs-Snapshot, der danach aus der
+            # Update-Prüfung fiele. Prüfsummen-Fehler oder eine belegte EXE
+            # werden gemeldet, nie umgangen.
+            if cancel.is_set() or (tools_dir / "ffmpeg.exe").exists():
                 raise
             progress(f"gyan.dev nicht erreichbar ({exc}) — "
                      f"wechsle zu GitHub-Fallback …", None)
@@ -316,26 +375,39 @@ def _ffmpeg_from(url: str, sums_url: str, version: str, tools_dir: Path,
 def dovi_tool_release(timeout: float = TIMEOUT) -> tuple[str, dict]:
     """(Version, Windows-x64-Asset) des neuesten dovi_tool-Releases."""
     release = json.loads(_get_bytes(DOVI_API, timeout))
-    version = str(release.get("tag_name", "?")).strip().lstrip("vV")
+    version = _release_number(str(release.get("tag_name", "")))
     # Achtung: im selben Release liegt auch libdovi-*-windows-msvc.zip —
     # deshalb strikt aufs dovi_tool-Präfix matchen
     asset = next(
         a for a in release.get("assets", [])
         if a["name"].startswith("dovi_tool-")
         and "x86_64-pc-windows" in a["name"]
-        and a["name"].endswith(".zip"))
+        and a["name"].endswith(".zip")
+        # der Name wird zum Dateinamen in tools/ — keine Pfadanteile
+        and not set(a["name"]) & set("/\\:"))
     return version, asset
 
 
 def _dovi_tool_release_via_web(timeout: float = TIMEOUT) -> tuple[str, dict]:
     """Ersatzweg ohne API (z. B. API-Limit bei geteilter IP): Version aus
-    der latest-Weiterleitung, Asset nach dem festen Namensschema — dann
-    allerdings ohne Digest."""
+    der latest-Weiterleitung, Asset nach dem festen Namensschema, Digest
+    von der normalen Release-Seite (Kopier-Knopf „digest for <name>“)."""
     tag = _final_url(DOVI_LATEST, timeout).rstrip("/").rsplit("/", 1)[-1]
     version = _release_number(tag)
     name = f"dovi_tool-{version}-x86_64-pc-windows-msvc.zip"
-    return version, {"name": name, "browser_download_url":
-                     f"{DOVI_DOWNLOAD}/{tag}/{name}"}
+    asset = {"name": name,
+             "browser_download_url": f"{DOVI_DOWNLOAD}/{tag}/{name}"}
+    try:
+        page = _get_text(f"{DOVI_EXPANDED}/{tag}", timeout)
+        # an genau das Element dieses Assets gebunden — nie den Digest
+        # einer Nachbardatei (libdovi, aarch64) erwischen
+        match = re.search(r'digest for ' + re.escape(name)
+                          + r'"[^>]*?value="sha256:([0-9a-f]{64})"', page)
+        if match:
+            asset["digest"] = f"sha256:{match.group(1)}"
+    except OSError:
+        pass   # ohne Digest weiter — der Dialog sagt das dann an
+    return version, asset
 
 
 def _asset_sha256(asset: dict) -> str | None:
@@ -363,7 +435,7 @@ def download_dovi_tool(tools_dir: Path, progress: ProgressCb,
             # API gestört/limitiert → normaler Release-Link, wie bei
             # Quellen ohne Prüfsummen-Datei dann ohne SHA-256
             progress("GitHub-API nicht erreichbar — nehme den Release-Link "
-                     "(ohne Prüfsumme) …", None)
+                     "…", None)
             version, asset = _dovi_tool_release_via_web()
     except (OSError, StopIteration, ValueError, KeyError) as exc:
         raise DownloadError(

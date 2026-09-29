@@ -40,8 +40,22 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 - **Keine 100-MB-Reste mehr in tools/:** Scheitert das Entpacken (EXE in
   Benutzung, Platte voll), wird die halbe `.part`-Datei aufgeräumt.
 - **Downloads ohne Prüfsumme werden angesagt** statt still als
-  „SHA-256-geprüft" zu gelten (32-bit-FFmpeg; dovi_tool, wenn die
-  GitHub-API gerade nicht antwortet).
+  „SHA-256-geprüft" zu gelten (32-bit-FFmpeg, dessen Quelle keine
+  Prüfsumme veröffentlicht; sonst nur, wenn eine Prüfsummen-Datei gerade
+  nicht abrufbar ist). dovi_tool bekommt seine Prüfsumme notfalls von der
+  normalen Release-Seite, wenn die GitHub-API ausgelastet ist.
+- **Updates tauschen ein Werkzeug-Paket ganz oder gar nicht** (z. B.
+  ffmpeg + ffprobe) — scheitert ein Schritt, bleibt der alte Stand
+  vollständig erhalten. Das klappt auch, während Spurwerk gerade Dateien
+  analysiert: Die alte EXE wird beiseitegelegt statt überschrieben.
+- **Ein FFmpeg-Update weicht nie auf einen Entwicklungs-Snapshot aus:**
+  Die GitHub-Ersatzquelle gibt es nur noch bei der Ersteinrichtung und
+  nur, wenn gyan.dev nicht erreichbar ist — ein Prüfsummen-Fehler wird
+  gemeldet, nicht umgangen.
+- **„Alle aktualisieren" installiert kein bewusst weggelassenes
+  dovi_tool mit**; Knöpfe sind während eines Downloads sichtbar gesperrt,
+  und eine gescheiterte Update-Prüfung zeigt nicht mehr den alten Stand
+  an, als wäre gerade geprüft worden.
 - **32-bit-Windows:** „Fehlende Werkzeuge herunterladen" endete immer mit
   einem Fehler, weil dovi_tool (gibt es nur für 64 bit) als fehlend
   zählte. Die Zeile sagt jetzt „nur für 64-bit-Windows".

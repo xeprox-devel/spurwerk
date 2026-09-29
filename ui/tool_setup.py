@@ -45,6 +45,8 @@ _TOOL_EXES = toolchain.KIND_EXE
 
 # Beschriftung des Zeilen-Knopfs — eine Breite für alle, damit nichts springt
 _ACTION_WIDTH = 15
+# darf fehlen: wer es bewusst weglässt, bekommt es nicht beim Aktualisieren
+_OPTIONAL_KINDS = ("dovi_tool",)
 
 
 def _tip(widget, text: str) -> None:
@@ -74,6 +76,7 @@ class ToolManagerDialog(ttk.Toplevel):
         self.q: queue.Queue = queue.Queue()
         self.cancel = threading.Event()
         self._running = False
+        self._awaiting_status = False   # nach Download bis zur Neuprüfung
         self._checking = False
         # Ein Totalausfall (offline) gilt als „noch nicht geprüft“
         self._latest = latest if latest and any(latest.values()) else None
@@ -249,7 +252,14 @@ class ToolManagerDialog(ttk.Toplevel):
             else:
                 action.configure(text="⬇  Neu laden",
                                  bootstyle="secondary-outline")
+            # sichtbar gesperrt statt stumm ignoriert
+            action.configure(state="disabled" if self._locked()
+                             else "normal")
         self._refresh_main_button()
+
+    def _locked(self) -> bool:
+        """Download läuft oder sein Ergebnis ist noch nicht nachgeprüft."""
+        return self._running or self._awaiting_status
 
     def _missing(self) -> list[str]:
         def incomplete(kind: str) -> bool:
@@ -275,21 +285,27 @@ class ToolManagerDialog(ttk.Toplevel):
                 if downloader.can_download(u.kind)]
 
     def _main_action(self) -> tuple[str, list[str]]:
-        """(Beschriftung, Pakete) des Hauptknopfs."""
+        """(Beschriftung, Pakete) des Hauptknopfs. Fehlt ein Pflicht-
+        Werkzeug, holt er alles Fehlende (Ersteinrichtung wie im
+        Onboarding); sonst aktualisiert er nur, was schon da ist — ein
+        bewusst weggelassenes dovi_tool bleibt weggelassen (dafür gibt es
+        den Zeilen-Knopf „Laden“)."""
         missing = self._missing()
         outdated = [k for k in self._outdated() if k not in missing]
-        kinds = missing + outdated
-        if missing and outdated:
-            return f"⬇  Fehlende laden + aktualisieren ({len(kinds)})", kinds
-        if missing:
+        if any(k not in _OPTIONAL_KINDS for k in missing):
+            kinds = missing + outdated
+            if outdated:
+                return (f"⬇  Fehlende laden + aktualisieren ({len(kinds)})",
+                        kinds)
             return "⬇  Fehlende Werkzeuge herunterladen", kinds
         if outdated:
-            return f"⬆  Alle aktualisieren ({len(outdated)})", kinds
-        all_current = self._latest is not None and all(
-            toolchain.update_state(
-                self._status[_TOOL_EXES[k]].version,
-                self._latest.get(k)) == toolchain.CURRENT
-            for k in self.rows)
+            return f"⬆  Alle aktualisieren ({len(outdated)})", outdated
+        present = [k for k in self.rows
+                   if (info := self._status.get(_TOOL_EXES[k])) and info.ok]
+        all_current = bool(self._latest and present) and all(
+            toolchain.update_state(self._status[_TOOL_EXES[k]].version,
+                                   self._latest.get(k)) == toolchain.CURRENT
+            for k in present)
         return ("✓  Alles aktuell" if all_current
                 else "✓  Alles vorhanden"), []
 
@@ -297,7 +313,7 @@ class ToolManagerDialog(ttk.Toplevel):
         text, kinds = self._main_action()
         self.main_btn.configure(
             text=text,
-            state="normal" if kinds and not self._running else "disabled")
+            state="normal" if kinds and not self._locked() else "disabled")
 
     def _message(self, text: str, color: str = theme.MUTED) -> None:
         """Reiner Hinweis ohne Fortschrittsbalken (der gehört zum Download)."""
@@ -348,7 +364,7 @@ class ToolManagerDialog(ttk.Toplevel):
             return
         self._running = True
         self.cancel.clear()
-        self._refresh_main_button()
+        self._refresh_updates()
         self.gauge.configure(value=0)
         self._show_progress()
         threading.Thread(target=self._download_worker, args=(kinds,),
@@ -421,12 +437,16 @@ class ToolManagerDialog(ttk.Toplevel):
                                               foreground=theme.MUTED)
                     self.gauge.configure(value=pct or 0)
                 elif msg[0] == "STATUS":
+                    self._awaiting_status = False
                     self._refresh_status(msg[1])
                 elif msg[0] == "LATEST":
                     self._on_latest(msg[1])
                 elif msg[0] == "DONE":
                     _, errors, unverified = msg
                     self._running = False
+                    # bis die Neuprüfung da ist, gilt der alte Stand nicht
+                    # mehr — sonst böte der Knopf alles noch einmal an
+                    self._awaiting_status = True
                     self.gauge.configure(value=100 if not errors else 0)
                     if errors:
                         self.step_label.configure(
@@ -443,7 +463,7 @@ class ToolManagerDialog(ttk.Toplevel):
                         self.step_label.configure(
                             text="Fertig — Werkzeuge sind einsatzbereit.",
                             foreground=theme.COLORS["success"])
-                    self._refresh_main_button()
+                    self._refresh_updates()
                     # Hauptfenster wurde schon vom Worker benachrichtigt
                     self._reprobe(notify_main=False)
         except queue.Empty:
@@ -455,12 +475,20 @@ class ToolManagerDialog(ttk.Toplevel):
         self._checking = False
         self.check_btn.configure(state="normal")
         if any(latest.values()):
-            self._latest = latest
+            # Teilausfall (eine Quelle gestört): bekannte Werte behalten,
+            # nur frische Werte kommen dazu
+            merged = dict(self._latest or {})
+            merged.update({k: v for k, v in latest.items() if v})
+            self._latest = merged
             if self.on_latest is not None:
-                self.on_latest(latest)
-        elif self._latest is None:
-            self._message("Update-Prüfung nicht möglich — keine Verbindung "
-                          "zu den Quellen?")
+                self.on_latest(merged)
+        else:
+            # Totalausfall: nicht so tun, als sei gerade geprüft worden
+            self._message(
+                "Update-Prüfung nicht möglich — keine Verbindung zu den "
+                "Quellen?" + (" Angezeigt wird der zuletzt bekannte Stand."
+                              if self._latest else ""),
+                theme.COLORS["warning"])
         self._refresh_updates()
 
     def _reprobe(self, notify_main: bool = True) -> None:

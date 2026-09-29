@@ -122,6 +122,8 @@ def comparable_version(version: str) -> tuple[int, ...]:
     version = version.strip()
     if not version or _DEV_BUILD_RE.match(version):
         return ()
+    if version[:1] == "n" and version[1:2].isdigit():
+        version = version[1:]   # BtbN-Release-Builds: „n9.0.2“
     return parse_version(version)
 
 
