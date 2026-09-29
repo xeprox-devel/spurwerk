@@ -18,6 +18,7 @@ from core.langs import display_name
 from core.model import Action, FilePlan, Origin, StereoSettings, Track
 
 from . import theme
+from .layout import TRACK_ROWS
 
 TYPE_LABELS = {"video": "Video", "audio": "Audio", "subtitles": "Untertitel"}
 
@@ -49,8 +50,10 @@ class TrackTable(ttk.Frame):
 
         scale = lambda px: utility.scale_size(self, px)  # noqa: E731
         columns = ("typ", "codec", "sprache", "kanaele", "name", "aktion", "q")
+        # height = natürliche Zeilenzahl; bei knapper Fensterhöhe setzt die
+        # Höhenverteilung des Hauptfensters bis zu 4 (ui/layout.py)
         self.tree = ttk.Treeview(self, columns=columns, show="tree headings",
-                                 selectmode="browse", height=6)
+                                 selectmode="browse", height=TRACK_ROWS[0])
         headings = [("#0", "An", 56), ("typ", "Typ", 84),
                     ("codec", "Codec", 120), ("sprache", "Sprache", 96),
                     ("kanaele", "Kanäle", 64), ("name", "Name", 150),

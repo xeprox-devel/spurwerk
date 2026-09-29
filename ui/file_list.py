@@ -9,6 +9,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap import utility
 
 from . import theme
+from .layout import FILE_ROWS
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -23,7 +24,7 @@ class FileList(ttk.Frame):
     """Treeview: Dateiname | Dauer | Plan | Status. iid = Dateipfad."""
 
     def __init__(self, master, *, on_select: Callable[[str], None],
-                 height: int = 4):
+                 height: int = FILE_ROWS[0]):
         super().__init__(master)
         self.on_select = on_select
 

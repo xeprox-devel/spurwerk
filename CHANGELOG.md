@@ -6,6 +6,25 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+### Behoben
+- **Spurtabelle verschwand bei knapper Fensterhöhe** (z. B. Laptop mit
+  1366×768, Protokoll offen, Audio-Konvertierung sichtbar). Die Höhe wird
+  jetzt nach Vorrang verteilt: Zuerst schrumpft das Protokoll bis auf
+  seine Kopfzeile, dann die Spurtabelle von 6 auf 4 Zeilen, zuletzt die
+  Dateiliste auf 3. Start, Fortschritt, Profil, Audio-Konvertierung,
+  Legende und Hinweise werden nie beschnitten. Mindest- und Fenstergröße
+  richten sich nach dem Gezeigten, der Skalierung und dem Arbeitsbereich
+  des Monitors — nichts rutscht mehr unter die Taskleiste. Ist der
+  Bildschirm dafür zu klein, weicht das Protokoll ganz; die Statuszeile
+  sagt es.
+- **Das Fenster wächst beim Laden von Dateien wieder automatisch mit** —
+  seit 2.1.0 hielt Spurwerk die eigenen Größenanpassungen fälschlich für
+  einen Eingriff des Nutzers und stellte das Mitwachsen ein.
+- **Fenster auf einem Monitor links oder oberhalb des Hauptmonitors**
+  öffnet wieder an seinem Platz. Die gespeicherte Position wurde nicht
+  erkannt (Tk schreibt sie als „+-1750+60“), das Fenster landete an der
+  automatischen Position — die Korrektur aus 2.0.0 griff dadurch nie.
+
 ## [2.1.0] — 2026-09-29
 
 ### Hinzugefügt

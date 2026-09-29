@@ -41,7 +41,7 @@ from core.profiles import describe
 from core.runner import JobRunner
 from core.scanner import ScanError, scan_file
 
-from . import theme
+from . import layout, theme
 from .file_list import FileList
 from .logpanel import LogPanel
 from .track_table import TrackTable
@@ -74,6 +74,10 @@ RELINK_FOLDERS = 8
 RELINK_FOLDER_S = 1.0
 _OUTPUT_TIP = ("Ausgabeziel wählen: Quellordner oder fester Ordner — plus "
                "Optionen für den Dateinamen.")
+# Innenabstände (x, y) in Pixeln — die Höhenverteilung rechnet mit ihnen
+_PAD = (12, 8)           # Hauptfenster
+_PANEL_PAD = (12, 8)     # Audio-Konvertierung
+_LOG_PADY = (6, 0)       # Abstand über dem Protokoll
 
 
 def _join(parts: list[str], word: str = "und") -> str:
@@ -97,7 +101,7 @@ def _tip(widget, text: str) -> ToolTip:
 class MainWindow(ttk.Frame):
     def __init__(self, master, cfg: appconfig.AppConfig,
                  dnd_ok: bool = True):
-        super().__init__(master, padding=(12, 8))
+        super().__init__(master, padding=_PAD)
         self.cfg = cfg
         self._dnd_ok = dnd_ok   # Drag&Drop verfügbar? (tkinterdnd2 geladen)
         self.profile: RuleProfile = cfg.profile(cfg.active_profile)
@@ -151,6 +155,14 @@ class MainWindow(ttk.Frame):
         # TMDb-Titel, die während eines Laufs für Dateien IM Lauf eintrafen —
         # erst danach übernehmen (der Lauf schreibt den bisherigen Namen)
         self._late_titles: dict[str, str] = {}
+        # Höhenverteilung (ui/layout.py): zuletzt gemessener Bedarf, Pixel je
+        # Zeile der elastischen Widgets, zuletzt gesetzte Zuteilung; Höhe und
+        # Umbruchbreite des Hinweises unter der Spurtabelle
+        self._needs: layout.Needs | None = None
+        self._row_px: dict[str, int] = {}
+        self.allocation: layout.Allocation | None = None
+        self._warn_height = 0
+        self._warn_wrap = 0
 
         self.columnconfigure(0, weight=1)
         self._build_header()
@@ -174,7 +186,7 @@ class MainWindow(ttk.Frame):
     # ══ Aufbau ═══════════════════════════════════════════════════════════
 
     def _build_header(self) -> None:
-        bar = ttk.Frame(self)
+        bar = self._header_bar = ttk.Frame(self)
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         bar.columnconfigure(1, weight=1)
 
@@ -253,7 +265,8 @@ class MainWindow(ttk.Frame):
             on_manual=self._open_tool_manager)
         # wird erst gegridet, wenn Tools fehlen (_update_onboarding)
 
-        zone = ttk.Frame(self.empty, padding=40, bootstyle="dark")
+        zone = self._drop_zone = ttk.Frame(self.empty, padding=40,
+                                           bootstyle="dark")
         zone.grid(row=1, column=0, sticky="ew", pady=(8, 4))
         zone.columnconfigure(0, weight=1)
         # Kein Versprechen, das die App nicht halten kann: ohne tkinterdnd2
@@ -295,7 +308,7 @@ class MainWindow(ttk.Frame):
         self.work.rowconfigure(3, weight=1)   # Spurtabelle wächst
 
         # ── Dateien ───────────────────────────────────────────────────────
-        files_head = ttk.Frame(self.work)
+        files_head = self._files_head = ttk.Frame(self.work)
         files_head.grid(row=0, column=0, sticky="ew")
         files_head.columnconfigure(1, weight=1)
         self.files_label = ttk.Label(files_head, text="DATEIEN",
@@ -333,7 +346,7 @@ class MainWindow(ttk.Frame):
         self.file_list.tree.bind("<Button-3>", self._file_context_menu)
 
         # ── Regeln ────────────────────────────────────────────────────────
-        rules = ttk.Frame(self.work)
+        rules = self._rules = ttk.Frame(self.work)
         rules.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         rules.columnconfigure(2, weight=1)
         ttk.Label(rules, text="Profil:").grid(row=0, column=0, padx=(0, 6))
@@ -370,7 +383,7 @@ class MainWindow(ttk.Frame):
         tracks_frame.columnconfigure(0, weight=1)
         tracks_frame.rowconfigure(1, weight=1)
 
-        head = ttk.Frame(tracks_frame)
+        head = self._tracks_head = ttk.Frame(tracks_frame)
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(0, weight=1)
         self.tracks_label = ttk.Label(head, text="SPUREN",
@@ -397,29 +410,35 @@ class MainWindow(ttk.Frame):
         self.track_table.grid(row=1, column=0, sticky="nsew", pady=(4, 2))
 
         # Legende für die Zeichen-Codes der Spurtabelle (Nachtcyan-Semantik)
-        ttk.Label(
+        # — bestimmt die Mindestbreite mit (_min_width): nie abgeschnitten
+        self._legend = ttk.Label(
             tracks_frame,
             text="✓ grün = verlustfrei behalten · ✓ cyan = neu erzeugt/"
                  "konvertiert · ▾ = Klick öffnet Aktionen · "
                  "★ = Standard-Audiospur · Q: R = Regel, M = manuell",
-            foreground=theme.MUTED, font=("Segoe UI", 9)
-        ).grid(row=2, column=0, sticky="w", pady=(0, 4))
+            foreground=theme.MUTED, font=("Segoe UI", 9))
+        self._legend.grid(row=2, column=0, sticky="w", pady=(0, 4))
 
         self.preview_label = ttk.Label(tracks_frame, foreground=theme.MUTED)
         self.preview_label.grid(row=3, column=0, sticky="w", pady=(0, 2))
+        # Hinweise: umgebrochen auf die Breite der Spurtabelle (wrap_warning,
+        # bis dahin Legendenbreite), ohne Text ausgeblendet (_warn_changed)
+        self._warn_wrap = self._legend.winfo_reqwidth()
         self.warn_label = ttk.Label(tracks_frame,
                                     foreground=theme.COLORS["warning"],
-                                    wraplength=920, justify="left")
+                                    wraplength=self._warn_wrap,
+                                    justify="left")
         self.warn_label.grid(row=4, column=0, sticky="w")
+        self.warn_label.grid_remove()
 
         # ── Konvertierungs-Panel (nur sichtbar, wenn relevant) ──────────
         self.stereo_panel = ttk.Labelframe(
-            self.work, text=" Audio-Konvertierung ", padding=(12, 8))
+            self.work, text=" Audio-Konvertierung ", padding=_PANEL_PAD)
         self.stereo_panel.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         self._build_stereo_panel(self.stereo_panel)
 
         # ── Start + Fortschritt ───────────────────────────────────────────
-        startbar = ttk.Frame(self.work)
+        startbar = self._startbar = ttk.Frame(self.work)
         startbar.grid(row=5, column=0, sticky="ew", pady=(12, 6))
         startbar.columnconfigure(0, weight=1)
         self.start_btn = ttk.Button(startbar, text="▶  Start (F5)",
@@ -451,8 +470,9 @@ class MainWindow(ttk.Frame):
 
         # ── Protokoll ─────────────────────────────────────────────────────
         self.log = LogPanel(self.work, expanded=self.cfg.log_expanded,
-                            on_toggle=lambda _e: self._autosize())
-        self.log.grid(row=7, column=0, sticky="nsew", pady=(6, 0))
+                            on_toggle=lambda _e: self._autosize(),
+                            on_notice=self._show_log_notice)
+        self.log.grid(row=7, column=0, sticky="nsew", pady=_LOG_PADY)
 
     def _build_stereo_panel(self, panel: ttk.Labelframe) -> None:
         self._codec_by_label = {v["label"]: k for k, v in OUTPUT_CODECS.items()}
@@ -491,6 +511,7 @@ class MainWindow(ttk.Frame):
 
         row2 = ttk.Frame(panel)
         row2.pack(fill="x", pady=(6, 2))
+        self._stereo_rows = (row1, row2)   # Bedienzeilen (Mindestbreite)
         ttk.Label(row2, text="Spurname:").pack(side="left")
         self.trackname_var = ttk.StringVar(value=self.stereo.track_name)
         entry = ttk.Entry(row2, textvariable=self.trackname_var, width=24)
@@ -556,9 +577,122 @@ class MainWindow(ttk.Frame):
             self.empty_notice.grid_remove()
 
     def _autosize(self, allow_shrink: bool = False) -> None:
+        """Nach einem Strukturwechsel: das Fenster (app.py) misst neu, passt
+        Größe und Mindestgröße an und verteilt die Höhe (fit)."""
         top = self.winfo_toplevel()
         if hasattr(top, "autosize"):
             top.autosize(allow_shrink=allow_shrink)
+
+    # ══ Fenstergröße / Höhenverteilung ═══════════════════════════════════
+
+    def measure(self) -> layout.Needs:
+        """Natürliche und Mindestgröße des Gezeigten (Pixel, Client-Bereich)
+        — gemessen an den angeforderten Größen der Widgets, damit sie bei
+        jeder Skalierung stimmt. fit() rechnet danach ohne neue Messung."""
+        self.update_idletasks()     # angeforderte Größen aller Rahmen aktuell
+        req_w, req_h = self.winfo_reqwidth(), self.winfo_reqheight()
+        if not self.work.winfo_manager():
+            # Leerzustand: nichts Elastisches — alles bleibt ganz sichtbar
+            parts = [self._header_bar, self._drop_zone]
+            if self.onboarding.winfo_manager():
+                parts.append(self.onboarding)
+            min_w = max(p.winfo_reqwidth() for p in parts) + 2 * _PAD[0]
+            self._needs = layout.Needs(req_w, req_h, min_w, req_h)
+        else:
+            metrics = self._height_metrics()
+            self._needs = layout.Needs(
+                req_w, layout.height(metrics, layout.natural(metrics)),
+                self._min_width(),
+                layout.height(metrics, layout.minimum(metrics)), metrics)
+        return self._needs
+
+    def needs(self) -> layout.Needs:
+        """Letzte Messung — gemessen wird nur, wenn es noch keine gibt."""
+        return self._needs or self.measure()
+
+    def fit(self, height: int) -> None:
+        """Die Höhe `height` (Client-Bereich) nach Priorität verteilen, siehe
+        ui/layout.py. Nutzt die letzte Messung und setzt nur, was sich
+        ändert — neue Zeilenzahlen ändern nie die Fenstergröße, also
+        schaukelt sich nichts auf."""
+        needs = self.needs()
+        if needs.metrics is None:
+            return                  # Leerzustand
+        alloc = layout.allocate(height, needs.metrics)
+        for tree, rows in ((self.file_list.tree, alloc.files),
+                           (self.track_table.tree, alloc.tracks)):
+            if int(tree.cget("height")) != rows:
+                tree.configure(height=rows)
+        self.log.fit(alloc.log_lines, visible=alloc.log_head)
+        self.allocation = alloc
+
+    def _height_metrics(self) -> layout.Metrics:
+        """Höhen der Arbeitsansicht: die elastischen Teile je Zeile, der
+        starre Rest aus der angeforderten Gesamthöhe abzüglich dessen, was
+        sie gerade belegen — unabhängig von der aktuellen Zuteilung."""
+        files, files_px = self._elastic(self.file_list.tree,
+                                        layout.FILE_ROWS)
+        tracks, tracks_px = self._elastic(self.track_table.tree,
+                                          layout.TRACK_ROWS)
+        body, body_px = self._elastic(self.log.text, layout.LOG_LINES,
+                                      box=self.log.body)
+        log_head = self.log.head_height() + sum(_LOG_PADY)
+        used = files_px + tracks_px
+        if self.log.winfo_manager():
+            used += log_head + (body_px if self.log.body_shown else 0)
+        return layout.Metrics(
+            rigid=self.winfo_reqheight() - used, files=files, tracks=tracks,
+            log_head=log_head, log=body if self.log.expanded else None)
+
+    def _elastic(self, widget, rows: tuple[int, int],
+                 box=None) -> tuple[layout.Elastic, int]:
+        """Elastischer Teil aus einem Widget mit Höhe in Zeilen (Treeview,
+        Text) samt den Pixeln, die er gerade anfordert. Sein Behälter hält
+        daneben die Bildlaufleiste: Sie streckt ihn bei wenigen Zeilen auf
+        ihre Mindesthöhe (floor) — linear ist nur das Widget selbst. `box`
+        umfasst den Behälter mit starrem Beiwerk (Protokoll: Knopf
+        „leeren“); ohne Angabe ist es der Behälter."""
+        row = self._row_height(widget)
+        own = widget.winfo_reqheight()
+        parent = widget.nametowidget(widget.winfo_parent())
+        beside = max((c.winfo_reqheight() for c in parent.winfo_children()
+                      if c is not widget and c.winfo_manager()), default=0)
+        req = (box or parent).winfo_reqheight()
+        extra = req - max(own, beside)      # Beiwerk um den Behälter
+        base = extra + own - int(widget.cget("height")) * row
+        return layout.Elastic(base, row, *rows, floor=extra + beside), req
+
+    def _row_height(self, widget) -> int:
+        """Pixel je Zeile — gemessen statt geschätzt: einmal eine Zeile mehr
+        anfordern (Treeview wie Text, jede Skalierung, Tk 8.6 und 9)."""
+        key = str(widget)
+        if key not in self._row_px:
+            rows = int(widget.cget("height"))
+            before = widget.winfo_reqheight()
+            widget.configure(height=rows + 1)
+            self._row_px[key] = max(1, widget.winfo_reqheight() - before)
+            widget.configure(height=rows)
+        return self._row_px[key]
+
+    def _min_width(self) -> int:
+        """Mindestbreite der Arbeitsansicht: jedes Bedienelement und die
+        Legende der Spurtabelle ganz sichtbar (etwa so breit wie deren
+        Spalten). Freie Texte (Regel, Dateiname, Start-Text) stehen in
+        dehnbaren Spalten und dürfen gekürzt werden; Hinweise brechen auf
+        die Tabellenbreite um (wrap_warning)."""
+        widths = [self._header_bar.winfo_reqwidth(),
+                  self._files_head.winfo_reqwidth(),
+                  self._legend.winfo_reqwidth()]
+        for box, text in ((self._rules, self.rule_label),
+                          (self._tracks_head, self.tracks_label),
+                          (self._startbar, self.start_btn)):
+            widths.append(box.winfo_reqwidth() - text.winfo_reqwidth())
+        if self.stereo_panel.winfo_manager():
+            border = ttk.Style().lookup("TLabelframe", "borderwidth")
+            chrome = 2 * (_PANEL_PAD[0] + int(float(border or 0)))
+            widths += [row.winfo_reqwidth() + chrome
+                       for row in self._stereo_rows]
+        return max(widths) + 2 * _PAD[0]
 
     def _selected_plan(self) -> FilePlan | None:
         return self.plans.get(self.selected) if self.selected else None
@@ -629,6 +763,7 @@ class MainWindow(ttk.Frame):
             preview, note = self._waiting_note(self.selected)
             self.preview_label.configure(text=preview)
             self.warn_label.configure(text=note)
+            self._warn_changed()
             return
         counts = plan.output_track_count
         video_part = f"{counts['video']}× Video"
@@ -662,6 +797,54 @@ class MainWindow(ttk.Frame):
             notes.append(sub_note)
         self.warn_label.configure(
             text=("⚠ " + "  ·  ".join(notes)) if notes else "")
+        self._warn_changed()
+
+    def _warn_changed(self) -> None:
+        """Neuer Hinweistext unter der Spurtabelle: Ändert sich damit seine
+        Höhe (ein-/ausgeblendet, mehr Zeilen), braucht die Arbeitsansicht
+        andere starre Höhe — neu messen und verteilen."""
+        if self._sync_warn_height():
+            self._autosize()
+
+    def _sync_warn_height(self) -> bool:
+        """Hinweis nur mit Text zeigen — eine leere Zeile hielte Höhe frei,
+        die bei knappem Platz der Spurtabelle fehlt. True, wenn sich die
+        belegte Höhe geändert hat."""
+        shown = bool(self.warn_label.cget("text"))
+        if shown != bool(self.warn_label.winfo_manager()):
+            if shown:
+                self.warn_label.grid()        # gemerkte Grid-Optionen
+            else:
+                self.warn_label.grid_remove()
+        height = self.warn_label.winfo_reqheight() if shown else 0
+        changed = height != self._warn_height
+        self._warn_height = height
+        return changed
+
+    def wrap_warning(self, width: int) -> bool:
+        """Den Hinweis auf die Breite der Spurtabelle umbrechen, die das
+        Fenster bei der Client-Breite `width` hat — so nutzt er die Breite
+        und wird nie rechts abgeschnitten. True, wenn sich seine Höhe dadurch
+        ändert (dann neu messen). Gesetzt wird nur bei Änderung."""
+        wrap = width - 2 * _PAD[0]
+        if wrap <= 0 or wrap == self._warn_wrap:
+            return False
+        self._warn_wrap = wrap
+        self.warn_label.configure(wraplength=wrap)
+        return self._sync_warn_height()
+
+    def _show_log_notice(self) -> None:
+        """Statuszeile: Hinweis, solange das Protokoll samt Kopfzeile
+        ausgeblendet ist (letzter Ausweg, ui/layout.py) — Fehler und
+        Warnungen landen dort. Während eines Laufs gehört die Zeile dem
+        Fortschritt; danach übernimmt _on_batch_done den Hinweis."""
+        if self._running:
+            return
+        text = self.log.notice
+        if self.status_label.cget("text") != text:
+            self.status_label.configure(
+                text=text,
+                foreground=theme.COLORS["warning"] if text else theme.MUTED)
 
     def _waiting_note(self, path: str | None) -> tuple[str, str]:
         """(Vorschau, Hinweis) für eine markierte Zeile, deren Quelle nicht
@@ -704,6 +887,7 @@ class MainWindow(ttk.Frame):
             self._autosize()
         elif not any_stereo and visible:
             self.stereo_panel.grid_remove()
+            self._autosize()    # freie Höhe neu verteilen (Protokoll)
 
     def _update_start_button(self) -> None:
         if self._starting:   # Überschreib-Prüfung läuft (Hintergrund)
@@ -1989,7 +2173,7 @@ class MainWindow(ttk.Frame):
         if kind == "LOG":
             self.log.log(msg[1], msg[2] if len(msg) > 2 else None)
         elif kind == "STATUS":
-            self.status_label.configure(text=msg[1])
+            self.status_label.configure(text=msg[1], foreground=theme.MUTED)
         elif kind == "PROGRESS_FILE":
             self.gauge_file.configure(value=msg[1])
         elif kind == "PROGRESS_TOTAL":
@@ -2129,6 +2313,7 @@ class MainWindow(ttk.Frame):
         for path, name in late.items():
             self._handle_message(("CANONICAL", path, name))
         self.status_label.configure(text="")
+        self._show_log_notice()     # ausgeblendetes Protokoll: wieder sagen
         self._update_start_button()
         if cancelled:
             message, style = "Abgebrochen.", "warning"
@@ -2203,6 +2388,7 @@ class MainWindow(ttk.Frame):
                               before=self._info_btn)
         self.update_chip.bind(
             "<Button-1>", lambda _e: self._open_update(info.url))
+        self._autosize()     # Kopfleiste breiter → Mindestbreite
         self.log.log(f"Neue Version {info.latest} verfügbar — Hinweis oben "
                      f"anklicken oder {info.url} öffnen.", "info")
 
@@ -2217,6 +2403,7 @@ class MainWindow(ttk.Frame):
         merged.update({k: v for k, v in latest.items() if v})
         self.tool_latest = merged
         self._update_tool_update_chip()
+        self._autosize()     # Kopfleiste ggf. breiter → Mindestbreite
 
     def _update_tool_update_chip(self) -> None:
         updates = toolchain.pending_updates(self.tool_status,
