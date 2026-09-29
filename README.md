@@ -15,7 +15,7 @@ wieder raus. Deine Originaldateien bleiben immer unangetastet.
   <img src="images/03.png" width="720" alt="Spurwerk-Hauptfenster: Warteschlange, Spurtabelle und Protokoll">
 </p>
 <p align="center">
-  <img src="images/02.png" width="352" alt="Werkzeuge-Dialog: Ein-Klick-Einrichtung von MKVToolNix, FFmpeg und dovi_tool">
+  <img src="images/02.png" width="352" alt="Werkzeuge-Dialog: Ein-Klick-Einrichtung und Aktualisierung von MKVToolNix, FFmpeg und dovi_tool">
   <img src="images/01.png" width="352" alt="Über-Dialog mit Versions- und Lizenzinformationen">
 </p>
 
