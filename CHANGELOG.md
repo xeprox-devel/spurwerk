@@ -6,6 +6,8 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-29
+
 ### Hinzugefügt
 - **Werkzeuge aktualisieren:** Der Werkzeuge-Dialog (⚙) vergleicht die
   installierten Versionen von MKVToolNix, FFmpeg und dovi_tool mit den
@@ -17,6 +19,37 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   werden ehrlich als „nicht vergleichbar" geführt statt geraten.
   Die Prüfung hängt am bestehenden Schalter „Beim Start nach Updates
   suchen" im Über-Dialog.
+- **Dateien auf einem nicht verbundenen Laufwerk (USB/NAS)** gehen nicht
+  mehr verloren: Sie stehen nach dem Start mit „Laufwerk fehlt" in der
+  Liste und behalten ihre Einstellungen. Ist das Laufwerk wieder da, liest
+  Spurwerk sie von selbst ein — nach wenigen Sekunden, beim Zurückkehren
+  ins Fenster sofort. Ist das Laufwerk da, die Datei aber nicht
+  (verschoben oder gelöscht), steht „Datei fehlt" in der Liste. Der Start
+  überspringt solche Dateien mit Hinweis im Protokoll; „Entfernen" nimmt
+  einzelne heraus, „Leeren" fragt vorher nach — auch, solange die Prüfung
+  noch läuft. Geprüft wird im Hintergrund, ein nicht erreichbares
+  Netzlaufwerk bremst den Start nicht mehr aus.
+- **USB-Platte unter anderem Laufwerksbuchstaben** (F: statt E:): Spurwerk
+  findet die wartende Datei dort selbst und liest sie mit allen
+  Einstellungen ein, am selben Platz der Warteschlange; eine manuell
+  gewählte Ausgabe auf der alten Platte zieht mit. Übernommen wird nur ein
+  eindeutiger Fund (gleiche Dateigröße) — liegt die Datei auf mehreren
+  Laufwerken, sagt das Protokoll es an und die Zeile wartet weiter. Ein
+  getrenntes Netzlaufwerk, das nicht antwortet, hält weder die Suche noch
+  die Prüfung der übrigen Zeilen auf.
+- **„Datei neu zuordnen …"** (Rechtsklick auf eine Zeile mit „Laufwerk
+  fehlt" oder „Datei fehlt"): Datei am neuen Ort auswählen, die
+  Einstellungen bleiben. Steht die gewählte Datei schon in der
+  Warteschlange, ändert sich nichts.
+- **Fester Ausgabeordner auf einem getrennten NAS** lässt den
+  Programmstart nicht mehr hängen und wird nicht mehr still auf
+  „Quellordner" zurückgesetzt: Der Ordner bleibt eingestellt, der Knopf
+  zeigt „⚠ nicht erreichbar", das Protokoll sagt es an, und Start
+  verweigert mit klarer Meldung, bis der Ordner wieder erreichbar ist
+  (Spurwerk prüft das selbst) oder ein anderer gewählt wird. Auch die
+  Frage „Ausgabedatei existiert bereits" prüft jetzt im Hintergrund.
+  Ein gelöschter Ausgabeordner auf einem vorhandenen Laufwerk bleibt
+  ebenfalls eingestellt und wird beim Start wieder angelegt.
 
 ### Geändert
 - **dovi_tool-Downloads werden jetzt per SHA-256 geprüft** (Prüfsumme aus
@@ -81,37 +114,6 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
   der Analyse beendet wird; Dateien mit Scan-Fehler bleiben samt
   Einstellungen gespeichert. Ist mkvmerge neu eingerichtet, werden
   fehlgeschlagene Dateien automatisch neu analysiert.
-- **Dateien auf einem nicht verbundenen Laufwerk (USB/NAS)** gehen nicht
-  mehr verloren: Sie stehen nach dem Start mit „Laufwerk fehlt" in der
-  Liste und behalten ihre Einstellungen. Ist das Laufwerk wieder da, liest
-  Spurwerk sie von selbst ein — nach wenigen Sekunden, beim Zurückkehren
-  ins Fenster sofort. Ist das Laufwerk da, die Datei aber nicht
-  (verschoben oder gelöscht), steht „Datei fehlt" in der Liste. Der Start
-  überspringt solche Dateien mit Hinweis im Protokoll; „Entfernen" nimmt
-  einzelne heraus, „Leeren" fragt vorher nach — auch, solange die Prüfung
-  noch läuft. Geprüft wird im Hintergrund, ein nicht erreichbares
-  Netzlaufwerk bremst den Start nicht mehr aus.
-- **USB-Platte unter anderem Laufwerksbuchstaben** (F: statt E:): Spurwerk
-  findet die wartende Datei dort selbst und liest sie mit allen
-  Einstellungen ein, am selben Platz der Warteschlange; eine manuell
-  gewählte Ausgabe auf der alten Platte zieht mit. Übernommen wird nur ein
-  eindeutiger Fund (gleiche Dateigröße) — liegt die Datei auf mehreren
-  Laufwerken, sagt das Protokoll es an und die Zeile wartet weiter. Ein
-  getrenntes Netzlaufwerk, das nicht antwortet, hält weder die Suche noch
-  die Prüfung der übrigen Zeilen auf.
-- **„Datei neu zuordnen …"** (Rechtsklick auf eine Zeile mit „Laufwerk
-  fehlt" oder „Datei fehlt"): Datei am neuen Ort auswählen, die
-  Einstellungen bleiben. Steht die gewählte Datei schon in der
-  Warteschlange, ändert sich nichts.
-- **Fester Ausgabeordner auf einem getrennten NAS** lässt den
-  Programmstart nicht mehr hängen und wird nicht mehr still auf
-  „Quellordner" zurückgesetzt: Der Ordner bleibt eingestellt, der Knopf
-  zeigt „⚠ nicht erreichbar", das Protokoll sagt es an, und Start
-  verweigert mit klarer Meldung, bis der Ordner wieder erreichbar ist
-  (Spurwerk prüft das selbst) oder ein anderer gewählt wird. Auch die
-  Frage „Ausgabedatei existiert bereits" prüft jetzt im Hintergrund.
-  Ein gelöschter Ausgabeordner auf einem vorhandenen Laufwerk bleibt
-  ebenfalls eingestellt und wird beim Start wieder angelegt.
 - **Keine Ausgabe überschreibt mehr die Quelle eines anderen Jobs**
   (z. B. „Film.mkv" und „Film_remux.mkv" im selben Ordner): Vor dem Start
   nennt eine Meldung beide Dateien, im Lauf wird der Job übersprungen.
@@ -164,7 +166,7 @@ Alle nennenswerten Änderungen an Spurwerk. Format angelehnt an
 - EXE gut 4 MB kleiner (ungenutzte Pillow-Codecs raus, UPX aus); jedes
   Release enthält THIRD_PARTY_LICENSES.txt mit den Lizenzhinweisen aller
   eingebetteten Komponenten.
-- 363 automatisierte Tests (vorher 123), die Oberflächen-Tests
+- 452 automatisierte Tests (vorher 123), die Oberflächen-Tests
   eingeschlossen.
 
 ## [2.0.0] — 2026-07-06
